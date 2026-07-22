@@ -157,10 +157,30 @@ select:focus {
   font-size: 0.85rem;
   color: var(--muted);
 }
+.table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
 .table-tools select {
   width: auto;
   display: inline-block;
   margin-left: 0.4rem;
+}
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+}
+.btn-secondary:hover {
+  filter: none;
+  border-color: var(--accent);
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
 }
 .table-wrap {
   overflow-x: auto;

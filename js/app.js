@@ -8,7 +8,7 @@ import {
   addDoc,
   deleteDoc,
   doc,
-  onSnapshot,
+  getDocs,
   query,
   orderBy,
   serverTimestamp,
@@ -46,10 +46,9 @@ const countEl = $("#total-count");
 const filtroCategoria = $("#filtro-categoria");
 const appError = $("#app-error");
 const loadingEl = $("#loading");
+const refreshBtn = $("#btn-actualizar");
 
-let unsubscribe = null;
 let allVales = [];
-let connectTimer = null;
 
 // --- Mostrar/ocultar un error visible en la interfaz -----------------------
 function showAppError(msg) {
@@ -67,16 +66,7 @@ function unlock() {
   pinScreen.hidden = true;
   appScreen.hidden = false;
   sessionStorage.setItem("vales_unlocked", "1");
-  try {
-    startListening();
-  } catch (err) {
-    // Errores SÍNCRONOS al iniciar Firestore (config inválida, etc.)
-    showAppError(
-      "No se pudo iniciar la conexión con Firestore: " +
-        (err && err.message ? err.message : err) +
-        ". Revisa la configuración en js/config.js."
-    );
-  }
+  loadVales(); // carga inicial (una sola vez); loadVales gestiona sus errores
 }
 
 pinForm.addEventListener("submit", (e) => {
@@ -114,46 +104,52 @@ fillSelect($("#categoria"), CATEGORIAS);
 fillSelect($("#monto"), MONTOS.map(String));
 fillSelect(filtroCategoria, CATEGORIAS, true);
 
-// --- Escuchar en tiempo real -----------------------------------------------
-function startListening() {
-  if (unsubscribe) return;
-
+// --- Cargar los vales una sola vez (getDocs) --------------------------------
+// Usamos una lectura puntual en lugar de onSnapshot: el canal de streaming en
+// tiempo real puede quedarse "colgado" tras algunos firewalls/VPN/extensiones,
+// mientras que una lectura puntual falla de forma explícita. El botón
+// «Actualizar» permite recargar manualmente.
+async function loadVales() {
   clearAppError();
   loadingEl.hidden = false;
+  if (refreshBtn) refreshBtn.disabled = true;
 
-  // Si tras 10 s no llega ninguna respuesta, avisa de posible problema de red
-  // (la escucha sigue activa; sólo es un aviso).
-  connectTimer = setTimeout(() => {
-    if (!loadingEl.hidden) {
-      showAppError(
-        "La conexión con Firestore está tardando demasiado. " +
-          "Revisa tu conexión a internet, que el projectId en js/config.js sea " +
-          "correcto, y que las reglas de Firestore permitan lectura."
-      );
-    }
-  }, 10000);
-
-  const q = query(valesRef, orderBy("fecha", "desc"));
-  unsubscribe = onSnapshot(
-    q,
-    (snapshot) => {
-      clearTimeout(connectTimer);
-      loadingEl.hidden = true;
-      clearAppError();
-      allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      render();
-    },
-    (err) => {
-      clearTimeout(connectTimer);
-      const code = err && err.code ? ` (${err.code})` : "";
-      showAppError(
-        "Error al cargar los datos" + code + ": " +
-          (err && err.message ? err.message : err) +
-          ". Si el código es 'permission-denied', despliega las reglas de Firestore."
-      );
-    }
-  );
+  try {
+    const q = query(valesRef, orderBy("fecha", "desc"));
+    const snapshot = await withTimeout(getDocs(q), 15000);
+    allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    loadingEl.hidden = true;
+    clearAppError();
+    render();
+  } catch (err) {
+    loadingEl.hidden = true;
+    const code = err && err.code ? ` (${err.code})` : "";
+    showAppError(
+      "Error al cargar los datos" + code + ": " +
+        (err && err.message ? err.message : err) +
+        ". Si el código es 'permission-denied', despliega las reglas de Firestore. " +
+        "Pulsa «Actualizar» para reintentar."
+    );
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
 }
+
+// Rechaza si la promesa no se resuelve dentro de `ms` (evita cuelgues indefinidos).
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Tiempo de espera agotado al conectar con Firestore")),
+        ms
+      )
+    ),
+  ]);
+}
+
+// Botón de recarga manual.
+if (refreshBtn) refreshBtn.addEventListener("click", loadVales);
 
 // --- Guardar un nuevo vale --------------------------------------------------
 valeForm.addEventListener("submit", async (e) => {
@@ -187,6 +183,7 @@ valeForm.addEventListener("submit", async (e) => {
     await addDoc(valesRef, data);
     valeForm.reset();
     $("#nombre").focus();
+    await loadVales(); // recargar la lista tras guardar
   } catch (err) {
     console.error("Error al guardar:", err);
     formError.textContent = "No se pudo guardar: " + err.message;
@@ -211,6 +208,7 @@ async function eliminarVale(id, nombre) {
   if (!confirm(`¿Eliminar el vale de "${nombre}"?`)) return;
   try {
     await deleteDoc(doc(db, COLLECTION, id));
+    await loadVales(); // recargar la lista tras eliminar
   } catch (err) {
     console.error("Error al eliminar:", err);
     alert("No se pudo eliminar: " + err.message);
