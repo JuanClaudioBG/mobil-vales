@@ -56,6 +56,20 @@ const refreshBtn = $("#btn-actualizar");
 const personaSelect = $("#persona");
 const catAuto = $("#cat-auto");
 const fechaValeInput = $("#fecha-vale");
+const fechaAnteriorToggle = $("#fecha-anterior-toggle");
+const fechaValeWrap = $("#fecha-vale-wrap");
+
+// Confirmación / toast
+const toastEl = $("#toast");
+const confirmModal = $("#confirm-modal");
+const cPersona = $("#c-persona");
+const cCategoria = $("#c-categoria");
+const cVales = $("#c-vales");
+const cTotal = $("#c-total");
+const cFecha = $("#c-fecha");
+const cRegistrado = $("#c-registrado");
+const btnCancelar = $("#btn-cancelar");
+const btnConfirmar = $("#btn-confirmar");
 
 // Autocompletado (sólo "Registrado por")
 const registradoPorInput = $("#registradoPor");
@@ -96,6 +110,10 @@ const btnLimpiar = $("#btn-limpiar");
 
 let allVales = [];
 const carrito = new Map(); // monto -> cantidad
+
+const MAX_VALES = 20; // tope de vales por registro
+let pendingSave = null; // payload en espera de confirmación
+let saving = false; // evita doble envío
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -183,12 +201,21 @@ function updateCategoriaAuto() {
   }
 }
 
-// Fecha del vale por defecto = hoy.
+// Fecha del vale por defecto = hoy (oculta salvo que se active el backdating).
 fechaValeInput.value = todayInput();
+fechaAnteriorToggle.addEventListener("change", () => {
+  fechaValeWrap.hidden = !fechaAnteriorToggle.checked;
+  if (fechaAnteriorToggle.checked && !fechaValeInput.value) {
+    fechaValeInput.value = todayInput();
+  }
+});
 
-// --- Carrito de montos: botones de denominación ----------------------------
+// --- Carrito de montos: botones de denominación (con + y −) -----------------
 const denomButtons = [];
 for (const monto of MONTOS) {
+  const item = document.createElement("div");
+  item.className = "denom-item";
+
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "denom-btn";
@@ -197,20 +224,59 @@ for (const monto of MONTOS) {
     `<span class="denom-amount">$${monto.toLocaleString("es-MX")}</span>` +
     `<span class="denom-badge"></span>`;
   btn.addEventListener("click", () => addToCart(monto));
-  denomsEl.appendChild(btn);
+
+  const minus = document.createElement("button");
+  minus.type = "button";
+  minus.className = "denom-minus";
+  minus.textContent = "−";
+  minus.title = "Quitar uno";
+  minus.hidden = true;
+  minus.addEventListener("click", () => removeFromCart(monto));
+
+  item.appendChild(btn);
+  item.appendChild(minus);
+  denomsEl.appendChild(item);
   denomButtons.push(btn);
 }
 
 if (btnLimpiar) btnLimpiar.addEventListener("click", clearCart);
 
+function cartCount() {
+  let n = 0;
+  for (const c of carrito.values()) n += c;
+  return n;
+}
+
 function addToCart(monto) {
+  if (cartCount() >= MAX_VALES) {
+    flashCartNote(`Máximo ${MAX_VALES} vales por registro.`);
+    return;
+  }
   carrito.set(monto, (carrito.get(monto) || 0) + 1);
+  renderCart();
+}
+
+function removeFromCart(monto) {
+  const c = carrito.get(monto) || 0;
+  if (c <= 1) carrito.delete(monto);
+  else carrito.set(monto, c - 1);
   renderCart();
 }
 
 function clearCart() {
   carrito.clear();
   renderCart();
+}
+
+let cartNoteTimer = null;
+function flashCartNote(msg) {
+  carritoCountEl.textContent = msg;
+  carritoCountEl.classList.add("cart-note");
+  clearTimeout(cartNoteTimer);
+  cartNoteTimer = setTimeout(() => {
+    carritoCountEl.classList.remove("cart-note");
+    renderCart();
+  }, 1800);
 }
 
 // Expande el carrito a una lista plana de montos: {200:2,300:1} -> [200,200,300]
@@ -223,32 +289,34 @@ function cartItems() {
 }
 
 function renderCart() {
-  // Badges en cada botón
+  // Badges + botón menos en cada denominación
   for (const btn of denomButtons) {
     const monto = Number(btn.dataset.monto);
     const cantidad = carrito.get(monto) || 0;
     const badge = btn.querySelector(".denom-badge");
     badge.textContent = cantidad > 0 ? "×" + cantidad : "";
     btn.classList.toggle("selected", cantidad > 0);
+    const minus = btn.parentElement.querySelector(".denom-minus");
+    if (minus) minus.hidden = cantidad === 0;
   }
 
   // Resumen
   carritoLista.innerHTML = "";
   let total = 0;
-  let count = 0;
+  const count = cartCount();
   const montosOrdenados = [...carrito.keys()].sort((a, b) => a - b);
   for (const monto of montosOrdenados) {
     const cantidad = carrito.get(monto);
     total += monto * cantidad;
-    count += cantidad;
     const li = document.createElement("li");
     li.textContent = `$${monto.toLocaleString("es-MX")} ×${cantidad}`;
     carritoLista.appendChild(li);
   }
 
   carritoTotalEl.textContent = "$" + total.toLocaleString("es-MX");
+  carritoCountEl.classList.remove("cart-note");
   carritoCountEl.textContent =
-    count > 0 ? `(${count} ${count === 1 ? "vale" : "vales"})` : "";
+    count > 0 ? `(${count}/${MAX_VALES} ${count === 1 ? "vale" : "vales"})` : "";
   carritoResumen.hidden = carrito.size === 0;
 }
 
@@ -302,21 +370,23 @@ function withTimeout(promise, ms) {
 // Botón de recarga manual.
 if (refreshBtn) refreshBtn.addEventListener("click", loadVales);
 
-// --- Guardar vales (uno por cada toque, como documentos separados) ----------
-valeForm.addEventListener("submit", async (e) => {
+// --- Enviar: validar → mostrar confirmación --------------------------------
+valeForm.addEventListener("submit", (e) => {
   e.preventDefault();
   formError.hidden = true;
 
   const persona = personaPorNombre.get(personaSelect.value);
+  // Si el toggle está apagado, la fecha es HOY; si está encendido, la del picker.
+  const fechaValeStr = fechaAnteriorToggle.checked ? fechaValeInput.value : todayInput();
+
   const base = {
     nombre: persona ? persona.nombre : "",
     categoria: persona ? persona.categoria : "",
     registradoPor: registradoPorInput.value.trim(),
     notas: $("#notas").value.trim(),
-    fechaValeStr: fechaValeInput.value, // "YYYY-MM-DD"
+    fechaValeStr,
   };
 
-  // Validación del lado del cliente (reflejo de firestore.rules)
   const problema = validarBase(base);
   if (problema) {
     formError.textContent = problema;
@@ -324,21 +394,92 @@ valeForm.addEventListener("submit", async (e) => {
     return;
   }
 
-  const items = cartItems(); // p. ej. [200, 200, 300, 500]
+  const items = cartItems();
   if (items.length === 0) {
     formError.textContent = "Agrega al menos un vale tocando una denominación.";
     formError.hidden = false;
     return;
   }
+  if (items.length > MAX_VALES) {
+    formError.textContent = `Máximo ${MAX_VALES} vales por registro.`;
+    formError.hidden = false;
+    return;
+  }
 
+  pendingSave = { base, items };
+  openConfirm(base, items);
+});
+
+function validarBase(d) {
+  if (!d.nombre || !CATEGORIAS.includes(d.categoria)) return "Selecciona una persona del directorio.";
+  if (!d.registradoPor || d.registradoPor.length > 100) return "Indica quién registra el vale (máx. 100).";
+  if (!d.fechaValeStr) return "Elige la fecha del vale.";
+  if (d.notas && d.notas.length > 500) return "Las notas no pueden superar 500 caracteres.";
+  return null;
+}
+
+// --- Modal de confirmación --------------------------------------------------
+function openConfirm(base, items) {
+  cPersona.textContent = base.nombre;
+  cCategoria.textContent = base.categoria;
+  cVales.textContent = resumenVales(items);
+  cTotal.textContent = money(sum(items));
+  cFecha.textContent = parseDateInput(base.fechaValeStr).toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+  cRegistrado.textContent = base.registradoPor;
+  confirmModal.hidden = false;
+}
+
+function closeConfirm() {
+  confirmModal.hidden = true;
+}
+
+// Agrupa items en "$200 ×2, $500 ×1"
+function resumenVales(items) {
+  const counts = new Map();
+  for (const m of items) counts.set(m, (counts.get(m) || 0) + 1);
+  return [...counts.keys()]
+    .sort((a, b) => a - b)
+    .map((m) => `$${m.toLocaleString("es-MX")} ×${counts.get(m)}`)
+    .join(", ");
+}
+
+btnCancelar.addEventListener("click", () => {
+  closeConfirm();
+  pendingSave = null;
+});
+confirmModal.addEventListener("click", (e) => {
+  if (e.target === confirmModal) {
+    closeConfirm();
+    pendingSave = null;
+  }
+});
+btnConfirmar.addEventListener("click", doSave);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !confirmModal.hidden && !saving) {
+    closeConfirm();
+    pendingSave = null;
+  }
+});
+
+// --- Guardar de verdad (tras confirmar) -------------------------------------
+async function doSave() {
+  if (saving || !pendingSave) return; // evita doble envío
+  saving = true;
+
+  const { base, items } = pendingSave;
   const fechaVale = Timestamp.fromDate(parseDateInput(base.fechaValeStr));
+  // batchId único: permite detectar/depurar envíos duplicados.
+  const batchId = uuid();
 
-  const btn = valeForm.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  btn.textContent = "Guardando…";
+  btnConfirmar.disabled = true;
+  btnCancelar.disabled = true;
+  btnConfirmar.innerHTML = '<span class="spinner"></span> Guardando…';
+
   try {
-    // Un documento por vale. fechaVale = fecha elegida (reportes/filtros);
-    // createdAt = marca de tiempo del sistema.
     const batch = writeBatch(db);
     for (const monto of items) {
       const ref = doc(valesRef); // ID automático
@@ -350,34 +491,60 @@ valeForm.addEventListener("submit", async (e) => {
         fechaVale,
         createdAt: serverTimestamp(),
         anulado: false,
+        batchId,
       };
       if (base.notas) docData.notas = base.notas; // opcional
       batch.set(ref, docData);
     }
     await batch.commit();
 
+    const n = items.length;
+    const total = sum(items);
+    pendingSave = null;
+    closeConfirm();
     valeForm.reset();
     clearCart();
     updateCategoriaAuto();
+    fechaAnteriorToggle.checked = false;
+    fechaValeWrap.hidden = true;
     fechaValeInput.value = todayInput();
     personaSelect.focus();
-    await loadVales(); // recargar la lista tras guardar
+    showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
+    await loadVales();
   } catch (err) {
     console.error("Error al guardar:", err);
     formError.textContent = "No se pudieron guardar los vales: " + err.message;
     formError.hidden = false;
+    closeConfirm();
   } finally {
-    btn.disabled = false;
-    btn.textContent = "Registrar vales";
+    saving = false;
+    btnConfirmar.disabled = false;
+    btnCancelar.disabled = false;
+    btnConfirmar.textContent = "Confirmar";
   }
-});
+}
 
-function validarBase(d) {
-  if (!d.nombre || !CATEGORIAS.includes(d.categoria)) return "Selecciona una persona del directorio.";
-  if (!d.registradoPor || d.registradoPor.length > 100) return "Indica quién registra el vale (máx. 100).";
-  if (!d.fechaValeStr) return "Elige la fecha del vale.";
-  if (d.notas && d.notas.length > 500) return "Las notas no pueden superar 500 caracteres.";
-  return null;
+// --- Toast de éxito (auto-cierra en 3 s) ------------------------------------
+let toastTimer = null;
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.hidden = false;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastEl.classList.remove("show");
+    setTimeout(() => (toastEl.hidden = true), 300);
+  }, 3000);
+}
+
+// UUID v4 (con respaldo si crypto.randomUUID no existe).
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 // --- Anular un vale (borrado suave) -----------------------------------------

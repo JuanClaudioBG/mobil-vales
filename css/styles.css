@@ -319,6 +319,30 @@ tr.row-anulada td {
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+.denom-item {
+  position: relative;
+}
+.denom-minus {
+  position: absolute;
+  bottom: -8px;
+  left: -8px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  border: 2px solid var(--surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.denom-minus:hover {
+  filter: brightness(1.1);
+}
 .denom-btn {
   position: relative;
   background: var(--surface-2);
@@ -389,6 +413,122 @@ tr.row-anulada td {
   color: var(--muted);
   font-size: 0.85rem;
   margin-left: 0.3rem;
+}
+.carrito-count.cart-note {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* --- Toggle de fecha ------------------------------------------------ */
+.fecha-field {
+  display: grid;
+  gap: 0.5rem;
+  align-content: start;
+}
+.check-inline {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.check-inline input {
+  width: auto;
+}
+
+/* --- Modal de confirmación ------------------------------------------ */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.4rem;
+  width: min(420px, 100%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.modal-card h2 {
+  margin: 0 0 1rem;
+  font-size: 1.2rem;
+}
+.confirm-summary {
+  margin: 0 0 1.2rem;
+  display: grid;
+  gap: 0.55rem;
+}
+.confirm-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+.confirm-summary dt {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.confirm-summary dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+#btn-confirmar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* --- Spinner -------------------------------------------------------- */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  border-top-color: var(--accent-ink);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Toast de éxito ------------------------------------------------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 20px);
+  z-index: 110;
+  background: #14532d;
+  color: #d7f5df;
+  border: 1px solid var(--familia);
+  border-radius: 10px;
+  padding: 0.8rem 1.2rem;
+  font-weight: 600;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 /* --- Banner de error / estado de conexión --------------------------- */

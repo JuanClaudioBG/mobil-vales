@@ -60,10 +60,16 @@
             <input id="registradoPor" type="text" maxlength="100" autocomplete="off" required />
             <ul id="registradoPor-sugerencias" class="suggestions" hidden></ul>
           </label>
-          <label>
-            Fecha del vale
-            <input id="fecha-vale" type="date" required />
-          </label>
+          <div class="fecha-field">
+            <label class="check-inline">
+              <input type="checkbox" id="fecha-anterior-toggle" />
+              Registrar vale de fecha anterior
+            </label>
+            <label id="fecha-vale-wrap" hidden>
+              Fecha del vale
+              <input id="fecha-vale" type="date" />
+            </label>
+          </div>
           <div class="full denom-field">
             <span class="field-label">Montos (toca para agregar cada vale)</span>
             <div id="denoms" class="denoms"></div>
@@ -202,6 +208,28 @@
           <p id="admin-vales-empty" class="empty" hidden>Aún no hay vales.</p>
         </div>
       </section>
+
+      <!-- Toast de éxito ------------------------------------------------>
+      <div id="toast" class="toast" hidden></div>
+
+      <!-- Modal de confirmación ---------------------------------------->
+      <div id="confirm-modal" class="modal" hidden>
+        <div class="modal-card">
+          <h2>¿Confirmar registro?</h2>
+          <dl class="confirm-summary">
+            <div><dt>Persona</dt><dd id="c-persona"></dd></div>
+            <div><dt>Categoría</dt><dd id="c-categoria"></dd></div>
+            <div><dt>Vales</dt><dd id="c-vales"></dd></div>
+            <div><dt>Total</dt><dd id="c-total"></dd></div>
+            <div><dt>Fecha</dt><dd id="c-fecha"></dd></div>
+            <div><dt>Registrado por</dt><dd id="c-registrado"></dd></div>
+          </dl>
+          <div class="modal-actions">
+            <button type="button" id="btn-cancelar" class="btn-secondary">Cancelar</button>
+            <button type="button" id="btn-confirmar">Confirmar</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <script type="module" src="./js/app.js"></script>

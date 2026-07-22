@@ -64,4 +64,5 @@ export const PERSONAS = [
   { nombre: "Héctor", categoria: "Empleado", depto: "Operaciones" },
   // Empleados — Logística
   { nombre: "Alex", categoria: "Empleado", depto: "Logística" },
+  { nombre: "Juan Ramon", categoria: "Empleado", depto: "Logística" },
 ];

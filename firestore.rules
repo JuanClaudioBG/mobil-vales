@@ -33,6 +33,7 @@ rules_version = '2';
 //    - notas:          string   (opcional, 0..500)
 //    - anulado:        bool      (opcional; borrado suave)
 //    - anuladoEn:      timestamp (opcional; cuándo se anuló)
+//    - batchId:        string    (opcional, <=64; id del lote para dedupe)
 //
 // ===============================================================
 
@@ -43,7 +44,7 @@ service cloud.firestore {
     function hasOnlyAllowedFields() {
       return request.resource.data.keys().hasOnly(
         ['nombre', 'categoria', 'monto', 'fechaVale', 'createdAt',
-         'registradoPor', 'notas', 'anulado', 'anuladoEn']
+         'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId']
       );
     }
 
@@ -72,6 +73,12 @@ service cloud.firestore {
               request.resource.data.anuladoEn is timestamp);
     }
 
+    function isValidOptionalBatchId() {
+      return !('batchId' in request.resource.data) ||
+             (request.resource.data.batchId is string &&
+              request.resource.data.batchId.size() <= 64);
+    }
+
     // --------- Validador de dominio (usado en create Y update) ---------
     function isValidVale() {
       return hasOnlyAllowedFields() &&
@@ -83,7 +90,8 @@ service cloud.firestore {
              request.resource.data.createdAt is timestamp &&
              isValidString('registradoPor', 1, 100) &&
              isValidOptionalNotas() &&
-             isValidOptionalAnulado();
+             isValidOptionalAnulado() &&
+             isValidOptionalBatchId();
     }
 
     // --------- Colección de vales ---------
