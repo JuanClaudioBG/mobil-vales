@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Registro de Vales de Gasolina</title>
+    <link rel="stylesheet" href="./css/styles.css" />
+  </head>
+  <body>
+    <!-- Pantalla de PIN ------------------------------------------------->
+    <section id="pin-screen" class="pin-screen">
+      <form id="pin-form" class="pin-card">
+        <h1>⛽ Vales</h1>
+        <p>Ingresa el PIN de acceso</p>
+        <input
+          id="pin-input"
+          type="password"
+          inputmode="numeric"
+          autocomplete="off"
+          placeholder="••••"
+          maxlength="12"
+          autofocus
+        />
+        <p id="pin-error" class="error" hidden>PIN incorrecto</p>
+        <button type="submit">Entrar</button>
+      </form>
+    </section>
+
+    <!-- Pantalla principal ---------------------------------------------->
+    <main id="app-screen" class="app-screen" hidden>
+      <header class="topbar">
+        <h1>⛽ Registro de Vales</h1>
+        <div class="totales">
+          <div><span id="total-count">0</span> vales</div>
+          <div class="total-monto">Total: <strong id="total-monto">$0</strong></div>
+        </div>
+      </header>
+
+      <!-- Formulario de captura --------------------------------------->
+      <form id="vale-form" class="card form-grid">
+        <label>
+          Nombre
+          <input id="nombre" type="text" maxlength="100" required />
+        </label>
+        <label>
+          Categoría
+          <select id="categoria" required></select>
+        </label>
+        <label>
+          Monto (MXN)
+          <select id="monto" required></select>
+        </label>
+        <label>
+          Registrado por
+          <input id="registradoPor" type="text" maxlength="100" required />
+        </label>
+        <label class="full">
+          Notas (opcional)
+          <input id="notas" type="text" maxlength="500" />
+        </label>
+        <p id="form-error" class="error full" hidden></p>
+        <div class="full">
+          <button type="submit">Registrar vale</button>
+        </div>
+      </form>
+
+      <!-- Filtro y tabla ---------------------------------------------->
+      <div class="card">
+        <div class="table-tools">
+          <label>
+            Filtrar:
+            <select id="filtro-categoria"></select>
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th class="num">Monto</th>
+                <th>Fecha</th>
+                <th>Registrado por</th>
+                <th>Notas</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="vales-body"></tbody>
+          </table>
+        </div>
+        <p id="empty-state" class="empty" hidden>Aún no hay vales registrados.</p>
+      </div>
+    </main>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

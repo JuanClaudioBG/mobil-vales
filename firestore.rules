@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// ===============================================================
+//  PROTOTIPO de reglas de seguridad  —  App de vales de gasolina
+// ===============================================================
+//
+//  ⚠️  ADVERTENCIA IMPORTANTE
+//  A petición explícita, esta colección permite LECTURA y ESCRITURA
+//  SIN AUTENTICACIÓN. El "PIN" de la app es sólo del lado del cliente y
+//  NO protege estos datos: cualquiera que conozca el projectId puede leer,
+//  crear, modificar o borrar documentos directamente.
+//
+//  Estas reglas hacen lo ÚNICO posible sin autenticación: validar la FORMA
+//  y el TAMAÑO de cada documento para limitar spam, basura y ataques de
+//  agotamiento (payloads gigantes). NO controlan QUIÉN accede.
+//
+//  Si algún día los datos dejan de ser de confianza, la solución real es
+//  Firebase Authentication + reglas basadas en el usuario. Con gusto te ayudo.
+//
+// ===============================================================
+//  Modelo de datos asumido
+// ===============================================================
+//
+//  Colección: vales
+//  ID de documento: automático (addDoc)
+//  Campos:
+//    - nombre:         string   (requerido, 1..100)
+//    - categoria:      string   (requerido, en ['Empleado','Familia'])
+//    - monto:          number   (requerido, en [200, 300, 500, 1000])
+//    - fecha:          timestamp(requerido; se escribe con serverTimestamp())
+//    - registradoPor:  string   (requerido, 1..100)
+//    - notas:          string   (opcional, 0..500)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --------- Funciones de ayuda ---------
+    function hasOnlyAllowedFields() {
+      return request.resource.data.keys().hasOnly(
+        ['nombre', 'categoria', 'monto', 'fecha', 'registradoPor', 'notas']
+      );
+    }
+
+    function hasRequiredFields() {
+      return request.resource.data.keys().hasAll(
+        ['nombre', 'categoria', 'monto', 'fecha', 'registradoPor']
+      );
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+             request.resource.data[field].size() >= minLen &&
+             request.resource.data[field].size() <= maxLen;
+    }
+
+    function isValidOptionalNotas() {
+      return !('notas' in request.resource.data) ||
+             (request.resource.data.notas is string &&
+              request.resource.data.notas.size() <= 500);
+    }
+
+    // --------- Validador de dominio (usado en create Y update) ---------
+    function isValidVale() {
+      return hasOnlyAllowedFields() &&
+             hasRequiredFields() &&
+             isValidString('nombre', 1, 100) &&
+             (request.resource.data.categoria in ['Empleado', 'Familia']) &&
+             (request.resource.data.monto in [200, 300, 500, 1000]) &&
+             request.resource.data.fecha is timestamp &&
+             isValidString('registradoPor', 1, 100) &&
+             isValidOptionalNotas();
+    }
+
+    // --------- Colección de vales ---------
+    match /vales/{valeId} {
+      // Lectura pública (solicitada explícitamente; datos no sensibles).
+      allow read: if true;
+
+      // Escritura pública, pero SÓLO si el documento cumple el esquema.
+      allow create: if isValidVale();
+      allow update: if isValidVale();
+
+      // Borrado permitido a cualquiera (equipo de confianza).
+      // Endurece esto (p. ej. exige Auth) si el borrado accidental/malicioso
+      // se vuelve un riesgo.
+      allow delete: if true;
+    }
+
+    // Todo lo demás: denegado por defecto.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

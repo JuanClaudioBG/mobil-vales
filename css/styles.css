@@ -1,0 +1,238 @@
+:root {
+  --bg: #0f1216;
+  --surface: #1a1f27;
+  --surface-2: #232a34;
+  --border: #303845;
+  --text: #e7ecf3;
+  --muted: #97a1b0;
+  --accent: #f5a623;
+  --accent-ink: #1a1f27;
+  --danger: #ef5350;
+  --empleado: #3d8bfd;
+  --familia: #26a269;
+  --radius: 12px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 1.1rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  transition: filter 0.15s ease;
+}
+button:hover {
+  filter: brightness(1.08);
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+input,
+select {
+  font: inherit;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 0.9rem;
+  margin: 0.25rem 0 0;
+}
+
+/* --- Pantalla de PIN ------------------------------------------------ */
+.pin-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.pin-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2rem;
+  width: min(340px, 100%);
+  text-align: center;
+  display: grid;
+  gap: 0.9rem;
+}
+.pin-card h1 {
+  font-size: 2rem;
+}
+.pin-card p {
+  margin: 0;
+  color: var(--muted);
+}
+.pin-card input {
+  text-align: center;
+  font-size: 1.4rem;
+  letter-spacing: 0.3em;
+}
+
+/* --- App ------------------------------------------------------------ */
+.app-screen {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.25rem;
+}
+.totales {
+  display: flex;
+  gap: 1.2rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.total-monto strong {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.2rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.9rem;
+}
+.form-grid label {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.form-grid .full {
+  grid-column: 1 / -1;
+}
+
+/* --- Tabla ---------------------------------------------------------- */
+.table-tools {
+  margin-bottom: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.table-tools select {
+  width: auto;
+  display: inline-block;
+  margin-left: 0.4rem;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+td.num,
+th.num {
+  text-align: right;
+}
+td.notas {
+  white-space: normal;
+  max-width: 220px;
+  color: var(--muted);
+}
+.error-row {
+  color: var(--danger);
+  text-align: center;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+}
+.badge--empleado {
+  background: var(--empleado);
+}
+.badge--familia {
+  background: var(--familia);
+}
+
+.btn-eliminar {
+  background: transparent;
+  color: var(--muted);
+  padding: 0.2rem 0.5rem;
+  font-size: 1rem;
+}
+.btn-eliminar:hover {
+  color: var(--danger);
+  filter: none;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 1.5rem 0 0.5rem;
+}
+
+/* --- Responsivo ----------------------------------------------------- */
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
