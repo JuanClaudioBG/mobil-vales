@@ -45,19 +45,24 @@
       <section id="view-registro" class="view">
         <!-- Formulario de captura ----------------------------------->
         <form id="vale-form" class="card form-grid">
-          <label class="autocomplete">
-            Nombre
-            <input id="nombre" type="text" maxlength="100" autocomplete="off" required />
-            <ul id="nombre-sugerencias" class="suggestions" hidden></ul>
-          </label>
           <label>
-            Categoría
-            <select id="categoria" required></select>
+            Persona
+            <select id="persona" required>
+              <option value="" disabled selected>Selecciona una persona…</option>
+            </select>
           </label>
+          <div class="cat-auto-wrap">
+            <span class="field-label">Categoría (automática)</span>
+            <span id="cat-auto" class="cat-auto">—</span>
+          </div>
           <label class="autocomplete">
             Registrado por
             <input id="registradoPor" type="text" maxlength="100" autocomplete="off" required />
             <ul id="registradoPor-sugerencias" class="suggestions" hidden></ul>
+          </label>
+          <label>
+            Fecha del vale
+            <input id="fecha-vale" type="date" required />
           </label>
           <div class="full denom-field">
             <span class="field-label">Montos (toca para agregar cada vale)</span>
@@ -101,7 +106,7 @@
                   <th>Nombre</th>
                   <th>Categoría</th>
                   <th class="num">Monto</th>
-                  <th>Fecha y hora</th>
+                  <th>Fecha del vale</th>
                   <th>Registrado por</th>
                   <th>Notas</th>
                   <th></th>
@@ -158,7 +163,7 @@
       <section id="view-admin" class="view" hidden>
         <div class="card">
           <div class="admin-head">
-            <h2>Resumen por persona (histórico)</h2>
+            <h2>Resumen por persona (histórico, sin anulados)</h2>
             <button type="button" id="btn-csv" class="btn-secondary">⬇ Exportar CSV</button>
           </div>
           <div class="table-wrap">
@@ -174,6 +179,27 @@
             </table>
           </div>
           <p id="admin-empty" class="empty" hidden>Aún no hay datos.</p>
+        </div>
+
+        <div class="card">
+          <h2>Todos los vales (incluye anulados)</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Persona</th>
+                  <th>Categoría</th>
+                  <th class="num">Monto</th>
+                  <th>Fecha del vale</th>
+                  <th>Registrado por</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="admin-vales-body"></tbody>
+            </table>
+          </div>
+          <p id="admin-vales-empty" class="empty" hidden>Aún no hay vales.</p>
         </div>
       </section>
     </main>

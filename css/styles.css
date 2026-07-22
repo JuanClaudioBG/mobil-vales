@@ -250,6 +250,54 @@ td.notas {
   color: var(--danger);
   filter: none;
 }
+.btn-anular {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.btn-anular:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  filter: none;
+}
+
+/* Categoría automática (a partir de la persona seleccionada) */
+.cat-auto-wrap {
+  display: grid;
+  gap: 0.3rem;
+  align-content: start;
+}
+.cat-auto {
+  justify-self: start;
+  color: var(--muted);
+  font-weight: 600;
+}
+.cat-auto.badge {
+  color: #fff;
+}
+
+/* Fila anulada + estados */
+tr.row-anulada td {
+  text-decoration: line-through;
+  color: var(--muted);
+  background: rgba(239, 83, 80, 0.06);
+}
+.estado-anulado {
+  color: var(--danger);
+  font-weight: 600;
+}
+.estado-activo {
+  color: var(--familia);
+  font-weight: 600;
+}
+.reg-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
 
 .empty {
   text-align: center;

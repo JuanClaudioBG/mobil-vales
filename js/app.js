@@ -5,8 +5,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import {
   getFirestore,
   collection,
-  deleteDoc,
   doc,
+  updateDoc,
   getDocs,
   query,
   orderBy,
@@ -21,6 +21,8 @@ import {
   COLLECTION,
   CATEGORIAS,
   MONTOS,
+  PERSONAS,
+  DEPARTAMENTOS,
 } from "./config.js";
 
 // --- Inicialización de Firebase --------------------------------------------
@@ -50,9 +52,12 @@ const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
 
-// Autocompletado
-const nombreInput = $("#nombre");
-const nombreSug = $("#nombre-sugerencias");
+// Formulario: persona / categoría automática / fecha del vale
+const personaSelect = $("#persona");
+const catAuto = $("#cat-auto");
+const fechaValeInput = $("#fecha-vale");
+
+// Autocompletado (sólo "Registrado por")
 const registradoPorInput = $("#registradoPor");
 const registradoPorSug = $("#registradoPor-sugerencias");
 
@@ -78,6 +83,8 @@ const dashChart = $("#dash-chart");
 const adminBody = $("#admin-body");
 const adminEmpty = $("#admin-empty");
 const btnCsv = $("#btn-csv");
+const adminValesBody = $("#admin-vales-body");
+const adminValesEmpty = $("#admin-vales-empty");
 
 // Carrito de montos (multi-vale)
 const denomsEl = $("#denoms");
@@ -90,9 +97,11 @@ const btnLimpiar = $("#btn-limpiar");
 let allVales = [];
 const carrito = new Map(); // monto -> cantidad
 
-// Fuentes de autocompletado (nombres/registradores distintos ya usados)
-let nombresDistintos = [];
+// Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
+
+// Búsqueda rápida persona -> categoría
+const personaPorNombre = new Map(PERSONAS.map((p) => [p.nombre, p]));
 
 // --- Mostrar/ocultar un error visible en la interfaz -----------------------
 function showAppError(msg) {
@@ -144,8 +153,38 @@ function fillSelect(select, values, includeAllOption = false) {
     select.appendChild(opt);
   }
 }
-fillSelect($("#categoria"), CATEGORIAS);
 fillSelect(filtroCategoria, CATEGORIAS, true);
+
+// --- Selector de persona (agrupado por departamento) -----------------------
+for (const depto of DEPARTAMENTOS) {
+  const gente = PERSONAS.filter((p) => p.depto === depto);
+  if (gente.length === 0) continue;
+  const group = document.createElement("optgroup");
+  group.label = depto;
+  for (const p of gente) {
+    const opt = document.createElement("option");
+    opt.value = p.nombre;
+    opt.textContent = p.label || p.nombre;
+    group.appendChild(opt);
+  }
+  personaSelect.appendChild(group);
+}
+
+// Al elegir persona, autocompleta la categoría (Familia / Empleado).
+personaSelect.addEventListener("change", updateCategoriaAuto);
+function updateCategoriaAuto() {
+  const p = personaPorNombre.get(personaSelect.value);
+  if (p) {
+    catAuto.textContent = p.categoria;
+    catAuto.className = "cat-auto badge badge--" + (p.categoria === "Familia" ? "familia" : "empleado");
+  } else {
+    catAuto.textContent = "—";
+    catAuto.className = "cat-auto";
+  }
+}
+
+// Fecha del vale por defecto = hoy.
+fechaValeInput.value = todayInput();
 
 // --- Carrito de montos: botones de denominación ----------------------------
 const denomButtons = [];
@@ -268,11 +307,13 @@ valeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   formError.hidden = true;
 
+  const persona = personaPorNombre.get(personaSelect.value);
   const base = {
-    nombre: $("#nombre").value.trim(),
-    categoria: $("#categoria").value,
-    registradoPor: $("#registradoPor").value.trim(),
+    nombre: persona ? persona.nombre : "",
+    categoria: persona ? persona.categoria : "",
+    registradoPor: registradoPorInput.value.trim(),
     notas: $("#notas").value.trim(),
+    fechaValeStr: fechaValeInput.value, // "YYYY-MM-DD"
   };
 
   // Validación del lado del cliente (reflejo de firestore.rules)
@@ -290,11 +331,14 @@ valeForm.addEventListener("submit", async (e) => {
     return;
   }
 
+  const fechaVale = Timestamp.fromDate(parseDateInput(base.fechaValeStr));
+
   const btn = valeForm.querySelector('button[type="submit"]');
   btn.disabled = true;
   btn.textContent = "Guardando…";
   try {
-    // Un documento por vale; misma fecha/nombre/categoria/registradoPor para todos.
+    // Un documento por vale. fechaVale = fecha elegida (reportes/filtros);
+    // createdAt = marca de tiempo del sistema.
     const batch = writeBatch(db);
     for (const monto of items) {
       const ref = doc(valesRef); // ID automático
@@ -303,7 +347,9 @@ valeForm.addEventListener("submit", async (e) => {
         categoria: base.categoria,
         monto,
         registradoPor: base.registradoPor,
-        fecha: serverTimestamp(),
+        fechaVale,
+        createdAt: serverTimestamp(),
+        anulado: false,
       };
       if (base.notas) docData.notas = base.notas; // opcional
       batch.set(ref, docData);
@@ -312,7 +358,9 @@ valeForm.addEventListener("submit", async (e) => {
 
     valeForm.reset();
     clearCart();
-    $("#nombre").focus();
+    updateCategoriaAuto();
+    fechaValeInput.value = todayInput();
+    personaSelect.focus();
     await loadVales(); // recargar la lista tras guardar
   } catch (err) {
     console.error("Error al guardar:", err);
@@ -325,22 +373,25 @@ valeForm.addEventListener("submit", async (e) => {
 });
 
 function validarBase(d) {
-  if (!d.nombre || d.nombre.length > 100) return "El nombre es obligatorio (máx. 100 caracteres).";
-  if (!CATEGORIAS.includes(d.categoria)) return "Selecciona una categoría válida.";
+  if (!d.nombre || !CATEGORIAS.includes(d.categoria)) return "Selecciona una persona del directorio.";
   if (!d.registradoPor || d.registradoPor.length > 100) return "Indica quién registra el vale (máx. 100).";
+  if (!d.fechaValeStr) return "Elige la fecha del vale.";
   if (d.notas && d.notas.length > 500) return "Las notas no pueden superar 500 caracteres.";
   return null;
 }
 
-// --- Eliminar un vale -------------------------------------------------------
-async function eliminarVale(id, nombre) {
-  if (!confirm(`¿Eliminar el vale de "${nombre}"?`)) return;
+// --- Anular un vale (borrado suave) -----------------------------------------
+async function anularVale(id, nombre) {
+  if (!confirm(`¿Anular el vale de "${nombre}"? Dejará de contar en reportes.`)) return;
   try {
-    await deleteDoc(doc(db, COLLECTION, id));
-    await loadVales(); // recargar la lista tras eliminar
+    await updateDoc(doc(db, COLLECTION, id), {
+      anulado: true,
+      anuladoEn: serverTimestamp(),
+    });
+    await loadVales();
   } catch (err) {
-    console.error("Error al eliminar:", err);
-    alert("No se pudo eliminar: " + err.message);
+    console.error("Error al anular:", err);
+    alert("No se pudo anular: " + err.message);
   }
 }
 
@@ -362,7 +413,6 @@ tabButtons.forEach((btn) => {
 //  Datos derivados (autocompletado)
 // ===========================================================================
 function refreshDerived() {
-  nombresDistintos = distinct(allVales.map((v) => v.nombre));
   registradoresDistintos = distinct(allVales.map((v) => v.registradoPor));
 }
 function distinct(arr) {
@@ -410,7 +460,6 @@ function setupAutocomplete(input, listEl, getSource, onPick) {
   });
 }
 
-setupAutocomplete(nombreInput, nombreSug, () => nombresDistintos);
 setupAutocomplete(registradoPorInput, registradoPorSug, () => registradoresDistintos);
 
 // ===========================================================================
@@ -429,9 +478,9 @@ function renderHistorial() {
   const mes = filtroMes.value; // "YYYY-MM" o ""
   const nombreQ = filtroNombre.value.trim().toLowerCase();
 
-  const vales = allVales.filter((v) => {
+  const vales = activos(allVales).filter((v) => {
     if (cat && v.categoria !== cat) return false;
-    if (mes && monthKey(v.fecha) !== mes) return false;
+    if (mes && monthKey(valeDate(v)) !== mes) return false;
     if (nombreQ && !(v.nombre || "").toLowerCase().includes(nombreQ)) return false;
     return true;
   });
@@ -449,16 +498,16 @@ function renderHistorial() {
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
-      <td>${formatFechaHora(v.fecha)}</td>
+      <td>${formatFechaVale(v)}</td>
       <td>${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas">${escapeHtml(v.notas || "")}</td>
     `;
     const acciones = document.createElement("td");
     const btn = document.createElement("button");
-    btn.className = "btn-eliminar";
-    btn.title = "Eliminar";
-    btn.textContent = "✕";
-    btn.addEventListener("click", () => eliminarVale(v.id, v.nombre));
+    btn.className = "btn-anular";
+    btn.title = "Anular";
+    btn.textContent = "Anular";
+    btn.addEventListener("click", () => anularVale(v.id, v.nombre));
     acciones.appendChild(btn);
     tr.appendChild(acciones);
     tbody.appendChild(tr);
@@ -476,7 +525,7 @@ dashMes.addEventListener("change", renderDashboard);
 
 function renderDashboard() {
   const mes = dashMes.value || currentMonthKey();
-  const delMes = allVales.filter((v) => monthKey(v.fecha) === mes);
+  const delMes = activos(allVales).filter((v) => monthKey(valeDate(v)) === mes);
 
   const total = sum(delMes.map((v) => v.monto));
   dashCount.textContent = String(delMes.length);
@@ -505,7 +554,7 @@ function renderDashboard() {
 
   // Gráfica: total por mes de los últimos 6 meses (terminando en `mes`)
   const meses = lastNMonths(mes, 6);
-  const totalesPorMes = groupSum(allVales, (v) => monthKey(v.fecha));
+  const totalesPorMes = groupSum(activos(allVales), (v) => monthKey(valeDate(v)));
   const values = meses.map((m) => (totalesPorMes.get(m.key)?.total) || 0);
   const labels = meses.map((m) => m.label);
   drawBarChart(dashChart, labels, values);
@@ -573,13 +622,15 @@ function drawBarChart(canvas, labels, values) {
 btnCsv.addEventListener("click", exportCsv);
 
 function adminRows() {
-  const porPersona = groupSum(allVales, (v) => v.nombre);
+  // Resumen histórico por persona, sin contar vales anulados.
+  const porPersona = groupSum(activos(allVales), (v) => v.nombre);
   return [...porPersona.entries()]
     .map(([nombre, agg]) => ({ nombre, count: agg.count, total: agg.total }))
     .sort((a, b) => b.total - a.total);
 }
 
 function renderAdmin() {
+  // --- Resumen por persona (sin anulados) ---
   const rows = adminRows();
   adminBody.innerHTML = "";
   adminEmpty.hidden = rows.length > 0;
@@ -590,6 +641,40 @@ function renderAdmin() {
       `<td class="num">${r.count}</td>` +
       `<td class="num">${money(r.total)}</td>`;
     adminBody.appendChild(tr);
+  }
+
+  // --- Todos los vales (incluye anulados, con tachado) ---
+  adminValesBody.innerHTML = "";
+  adminValesEmpty.hidden = allVales.length > 0;
+  for (const v of allVales) {
+    const anulado = !!v.anulado;
+    const tr = document.createElement("tr");
+    tr.className = anulado
+      ? "row-anulada"
+      : v.categoria === "Familia"
+      ? "row-familia"
+      : "row-empleado";
+    tr.innerHTML = `
+      <td>${escapeHtml(v.nombre)}</td>
+      <td><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
+      v.categoria
+    )}</span></td>
+      <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
+      <td>${formatFechaVale(v)}</td>
+      <td>${escapeHtml(v.registradoPor || "")}</td>
+      <td>${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
+    `;
+    const acciones = document.createElement("td");
+    if (!anulado) {
+      const btn = document.createElement("button");
+      btn.className = "btn-anular";
+      btn.title = "Anular";
+      btn.textContent = "Anular";
+      btn.addEventListener("click", () => anularVale(v.id, v.nombre));
+      acciones.appendChild(btn);
+    }
+    tr.appendChild(acciones);
+    adminValesBody.appendChild(tr);
   }
 }
 
@@ -623,20 +708,54 @@ function toDate(fecha) {
   return fecha instanceof Timestamp ? fecha.toDate() : new Date(fecha);
 }
 
-function formatFechaHora(fecha) {
-  const d = toDate(fecha);
-  if (!d) return "—"; // aún no confirmado por el servidor
+// Sólo los vales NO anulados.
+function activos(vales) {
+  return vales.filter((v) => !v.anulado);
+}
+
+// Fecha del vale para reportes/filtros: fechaVale (con respaldo a datos viejos).
+function valeDate(v) {
+  return toDate(v.fechaVale) || toDate(v.fecha) || toDate(v.createdAt);
+}
+
+// Muestra la fecha del vale + (en gris) la hora de registro del sistema.
+function formatFechaVale(v) {
+  const d = valeDate(v);
+  if (!d) return "—";
   const f = d.toLocaleDateString("es-MX", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
-  const h = d.toLocaleTimeString("es-MX", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return `${f} ${h}`;
+  const created = toDate(v.createdAt) || toDate(v.fecha);
+  const reg = created
+    ? `<span class="reg-time">reg. ${created.toLocaleString("es-MX", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })}</span>`
+    : "";
+  return `${f}${reg ? "<br>" + reg : ""}`;
+}
+
+// "YYYY-MM-DD" de hoy (para el input date).
+function todayInput() {
+  const d = new Date();
+  return (
+    d.getFullYear() +
+    "-" +
+    String(d.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(d.getDate()).padStart(2, "0")
+  );
+}
+
+// Convierte "YYYY-MM-DD" a Date en medianoche local.
+function parseDateInput(str) {
+  const [y, m, d] = str.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 // Clave "YYYY-MM" de una fecha (usando hora local).

@@ -27,9 +27,12 @@ rules_version = '2';
 //    - nombre:         string   (requerido, 1..100)
 //    - categoria:      string   (requerido, en ['Empleado','Familia'])
 //    - monto:          number   (requerido, en [200, 300, 500, 1000])
-//    - fecha:          timestamp(requerido; se escribe con serverTimestamp())
+//    - fechaVale:      timestamp(requerido; fecha del vale elegida por el usuario)
+//    - createdAt:      timestamp(requerido; serverTimestamp() del sistema)
 //    - registradoPor:  string   (requerido, 1..100)
 //    - notas:          string   (opcional, 0..500)
+//    - anulado:        bool      (opcional; borrado suave)
+//    - anuladoEn:      timestamp (opcional; cuándo se anuló)
 //
 // ===============================================================
 
@@ -39,13 +42,14 @@ service cloud.firestore {
     // --------- Funciones de ayuda ---------
     function hasOnlyAllowedFields() {
       return request.resource.data.keys().hasOnly(
-        ['nombre', 'categoria', 'monto', 'fecha', 'registradoPor', 'notas']
+        ['nombre', 'categoria', 'monto', 'fechaVale', 'createdAt',
+         'registradoPor', 'notas', 'anulado', 'anuladoEn']
       );
     }
 
     function hasRequiredFields() {
       return request.resource.data.keys().hasAll(
-        ['nombre', 'categoria', 'monto', 'fecha', 'registradoPor']
+        ['nombre', 'categoria', 'monto', 'fechaVale', 'createdAt', 'registradoPor']
       );
     }
 
@@ -61,6 +65,13 @@ service cloud.firestore {
               request.resource.data.notas.size() <= 500);
     }
 
+    function isValidOptionalAnulado() {
+      return (!('anulado' in request.resource.data) ||
+              request.resource.data.anulado is bool) &&
+             (!('anuladoEn' in request.resource.data) ||
+              request.resource.data.anuladoEn is timestamp);
+    }
+
     // --------- Validador de dominio (usado en create Y update) ---------
     function isValidVale() {
       return hasOnlyAllowedFields() &&
@@ -68,9 +79,11 @@ service cloud.firestore {
              isValidString('nombre', 1, 100) &&
              (request.resource.data.categoria in ['Empleado', 'Familia']) &&
              (request.resource.data.monto in [200, 300, 500, 1000]) &&
-             request.resource.data.fecha is timestamp &&
+             request.resource.data.fechaVale is timestamp &&
+             request.resource.data.createdAt is timestamp &&
              isValidString('registradoPor', 1, 100) &&
-             isValidOptionalNotas();
+             isValidOptionalNotas() &&
+             isValidOptionalAnulado();
     }
 
     // --------- Colección de vales ---------
@@ -79,13 +92,12 @@ service cloud.firestore {
       allow read: if true;
 
       // Escritura pública, pero SÓLO si el documento cumple el esquema.
+      // El borrado suave (anular) es un 'update' que también pasa por isValidVale().
       allow create: if isValidVale();
       allow update: if isValidVale();
 
-      // Borrado permitido a cualquiera (equipo de confianza).
-      // Endurece esto (p. ej. exige Auth) si el borrado accidental/malicioso
-      // se vuelve un riesgo.
-      allow delete: if true;
+      // Sin borrado físico: se usa borrado suave (anulado = true).
+      allow delete: if false;
     }
 
     // Todo lo demás: denegado por defecto.
