@@ -58,7 +58,7 @@ function unlock() {
 
 pinForm.addEventListener("submit", (e) => {
   e.preventDefault();
-  if (pinInput.value === ACCESS_PIN) {
+  if (pinInput.value.trim() === ACCESS_PIN) {
     pinError.hidden = true;
     unlock();
   } else {
