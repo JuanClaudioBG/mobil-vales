@@ -33,7 +33,7 @@ export const COLLECTION = "vales";
 
 // Opciones permitidas (deben coincidir con firestore.rules).
 export const CATEGORIAS = ["Empleado", "Familia"];
-export const MONTOS = [200, 300, 500, 1000];
+export const MONTOS = [200, 300, 500, 1000, 4000];
 
 // Orden de los departamentos en el selector de persona.
 export const DEPARTAMENTOS = [
@@ -62,6 +62,7 @@ export const PERSONAS = [
   { nombre: "Yankee", categoria: "Empleado", depto: "Operaciones" },
   { nombre: "Juanjo", categoria: "Empleado", depto: "Operaciones" },
   { nombre: "Héctor", categoria: "Empleado", depto: "Operaciones" },
+  { nombre: "Operaciones (General)", categoria: "Empleado", depto: "Operaciones" },
   // Empleados — Logística
   { nombre: "Alex", categoria: "Empleado", depto: "Logística" },
   { nombre: "Juan Ramon", categoria: "Empleado", depto: "Logística" },

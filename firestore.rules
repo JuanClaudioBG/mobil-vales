@@ -26,7 +26,7 @@ rules_version = '2';
 //  Campos:
 //    - nombre:         string   (requerido, 1..100)
 //    - categoria:      string   (requerido, en ['Empleado','Familia'])
-//    - monto:          number   (requerido, en [200, 300, 500, 1000])
+//    - monto:          number   (requerido, en [200, 300, 500, 1000, 4000])
 //    - fechaVale:      timestamp(requerido; fecha del vale elegida por el usuario)
 //    - createdAt:      timestamp(requerido; serverTimestamp() del sistema)
 //    - registradoPor:  string   (requerido, 1..100)
@@ -85,7 +85,7 @@ service cloud.firestore {
              hasRequiredFields() &&
              isValidString('nombre', 1, 100) &&
              (request.resource.data.categoria in ['Empleado', 'Familia']) &&
-             (request.resource.data.monto in [200, 300, 500, 1000]) &&
+             (request.resource.data.monto in [200, 300, 500, 1000, 4000]) &&
              request.resource.data.fechaVale is timestamp &&
              request.resource.data.createdAt is timestamp &&
              isValidString('registradoPor', 1, 100) &&
