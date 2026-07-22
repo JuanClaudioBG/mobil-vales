@@ -44,16 +44,39 @@ const emptyState = $("#empty-state");
 const totalEl = $("#total-monto");
 const countEl = $("#total-count");
 const filtroCategoria = $("#filtro-categoria");
+const appError = $("#app-error");
+const loadingEl = $("#loading");
 
 let unsubscribe = null;
 let allVales = [];
+let connectTimer = null;
+
+// --- Mostrar/ocultar un error visible en la interfaz -----------------------
+function showAppError(msg) {
+  if (loadingEl) loadingEl.hidden = true;
+  appError.textContent = msg;
+  appError.hidden = false;
+  console.error("[vales] " + msg);
+}
+function clearAppError() {
+  appError.hidden = true;
+}
 
 // --- Puerta de PIN (sólo cosmética, ver advertencia en config.js) ----------
 function unlock() {
   pinScreen.hidden = true;
   appScreen.hidden = false;
   sessionStorage.setItem("vales_unlocked", "1");
-  startListening();
+  try {
+    startListening();
+  } catch (err) {
+    // Errores SÍNCRONOS al iniciar Firestore (config inválida, etc.)
+    showAppError(
+      "No se pudo iniciar la conexión con Firestore: " +
+        (err && err.message ? err.message : err) +
+        ". Revisa la configuración en js/config.js."
+    );
+  }
 }
 
 pinForm.addEventListener("submit", (e) => {
@@ -94,18 +117,40 @@ fillSelect(filtroCategoria, CATEGORIAS, true);
 // --- Escuchar en tiempo real -----------------------------------------------
 function startListening() {
   if (unsubscribe) return;
+
+  clearAppError();
+  loadingEl.hidden = false;
+
+  // Si tras 10 s no llega ninguna respuesta, avisa de posible problema de red
+  // (la escucha sigue activa; sólo es un aviso).
+  connectTimer = setTimeout(() => {
+    if (!loadingEl.hidden) {
+      showAppError(
+        "La conexión con Firestore está tardando demasiado. " +
+          "Revisa tu conexión a internet, que el projectId en js/config.js sea " +
+          "correcto, y que las reglas de Firestore permitan lectura."
+      );
+    }
+  }, 10000);
+
   const q = query(valesRef, orderBy("fecha", "desc"));
   unsubscribe = onSnapshot(
     q,
     (snapshot) => {
+      clearTimeout(connectTimer);
+      loadingEl.hidden = true;
+      clearAppError();
       allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
       render();
     },
     (err) => {
-      console.error("Error al leer vales:", err);
-      tbody.innerHTML = `<tr><td colspan="6" class="error-row">Error al cargar los datos: ${escapeHtml(
-        err.message
-      )}</td></tr>`;
+      clearTimeout(connectTimer);
+      const code = err && err.code ? ` (${err.code})` : "";
+      showAppError(
+        "Error al cargar los datos" + code + ": " +
+          (err && err.message ? err.message : err) +
+          ". Si el código es 'permission-denied', despliega las reglas de Firestore."
+      );
     }
   );
 }

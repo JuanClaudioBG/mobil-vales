@@ -230,6 +230,26 @@ td.notas {
   padding: 1.5rem 0 0.5rem;
 }
 
+/* --- Banner de error / estado de conexión --------------------------- */
+.app-error {
+  background: #3a1d1d;
+  border: 1px solid var(--danger);
+  color: #ffd9d6;
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+.loading {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  font-size: 0.92rem;
+  text-align: center;
+}
+
 /* --- Responsivo ----------------------------------------------------- */
 @media (max-width: 560px) {
   .form-grid {
