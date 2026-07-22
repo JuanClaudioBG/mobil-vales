@@ -18,6 +18,7 @@ import {
 import {
   firebaseConfig,
   ACCESS_PIN,
+  ADMIN_PIN,
   COLLECTION,
   CATEGORIAS,
   MONTOS,
@@ -70,6 +71,14 @@ const cFecha = $("#c-fecha");
 const cRegistrado = $("#c-registrado");
 const btnCancelar = $("#btn-cancelar");
 const btnConfirmar = $("#btn-confirmar");
+
+// Modal de PIN de administrador
+const adminPinModal = $("#admin-pin-modal");
+const adminPinAction = $("#admin-pin-action");
+const adminPinInput = $("#admin-pin-input");
+const adminPinError = $("#admin-pin-error");
+const adminPinOk = $("#admin-pin-ok");
+const adminPinCancel = $("#admin-pin-cancel");
 
 // Autocompletado (sólo "Registrado por")
 const registradoPorInput = $("#registradoPor");
@@ -547,9 +556,52 @@ function uuid() {
   });
 }
 
-// --- Anular un vale (borrado suave) -----------------------------------------
+// --- PIN de administrador (reutilizable para acciones sensibles) ------------
+// Devuelve una promesa que resuelve true (PIN correcto) o false (cancelado).
+let adminPinResolver = null;
+function requestAdminPin(actionLabel) {
+  return new Promise((resolve) => {
+    adminPinResolver = resolve;
+    adminPinAction.textContent = actionLabel || "";
+    adminPinInput.value = "";
+    adminPinError.hidden = true;
+    adminPinModal.hidden = false;
+    setTimeout(() => adminPinInput.focus(), 40);
+  });
+}
+function settleAdminPin(result) {
+  adminPinModal.hidden = true;
+  const resolve = adminPinResolver;
+  adminPinResolver = null;
+  if (resolve) resolve(result);
+}
+adminPinOk.addEventListener("click", () => {
+  if (adminPinInput.value.trim() === ADMIN_PIN) {
+    settleAdminPin(true);
+  } else {
+    // PIN incorrecto: muestra error; la acción no procede hasta un PIN válido.
+    adminPinError.hidden = false;
+    adminPinInput.value = "";
+    adminPinInput.focus();
+  }
+});
+adminPinCancel.addEventListener("click", () => settleAdminPin(false));
+adminPinModal.addEventListener("click", (e) => {
+  if (e.target === adminPinModal) settleAdminPin(false);
+});
+adminPinInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    adminPinOk.click();
+  } else if (e.key === "Escape") {
+    settleAdminPin(false);
+  }
+});
+
+// --- Anular un vale (borrado suave) — requiere PIN de administrador ----------
 async function anularVale(id, nombre) {
-  if (!confirm(`¿Anular el vale de "${nombre}"? Dejará de contar en reportes.`)) return;
+  const ok = await requestAdminPin(`Anular el vale de "${nombre}". Dejará de contar en reportes.`);
+  if (!ok) return;
   try {
     await updateDoc(doc(db, COLLECTION, id), {
       anulado: true,

@@ -461,6 +461,20 @@ tr.row-anulada td {
   margin: 0 0 1rem;
   font-size: 1.2rem;
 }
+.modal-card--sm {
+  width: min(320px, 100%);
+}
+.modal-sub {
+  margin: -0.4rem 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+#admin-pin-input {
+  text-align: center;
+  font-size: 1.3rem;
+  letter-spacing: 0.3em;
+  margin-bottom: 0.6rem;
+}
 .confirm-summary {
   margin: 0 0 1.2rem;
   display: grid;

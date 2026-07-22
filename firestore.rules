@@ -34,6 +34,9 @@ rules_version = '2';
 //    - anulado:        bool      (opcional; borrado suave)
 //    - anuladoEn:      timestamp (opcional; cuándo se anuló)
 //    - batchId:        string    (opcional, <=64; id del lote para dedupe)
+//    - fecha:          timestamp (LEGACY; documentos antiguos usaban este campo
+//                                 en vez de 'fechaVale'. Se permite para poder
+//                                 actualizarlos/anularlos.)
 //
 // ===============================================================
 
@@ -41,16 +44,12 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // --------- Funciones de ayuda ---------
+    // 'fecha' (legacy) se incluye para que los documentos ANTIGUOS —guardados
+    // con 'fecha' en lugar de 'fechaVale'— sigan pudiendo actualizarse/anularse.
     function hasOnlyAllowedFields() {
       return request.resource.data.keys().hasOnly(
-        ['nombre', 'categoria', 'monto', 'fechaVale', 'createdAt',
+        ['nombre', 'categoria', 'monto', 'fechaVale', 'fecha', 'createdAt',
          'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId']
-      );
-    }
-
-    function hasRequiredFields() {
-      return request.resource.data.keys().hasAll(
-        ['nombre', 'categoria', 'monto', 'fechaVale', 'createdAt', 'registradoPor']
       );
     }
 
@@ -79,19 +78,37 @@ service cloud.firestore {
               request.resource.data.batchId.size() <= 64);
     }
 
-    // --------- Validador de dominio (usado en create Y update) ---------
-    function isValidVale() {
-      return hasOnlyAllowedFields() &&
-             hasRequiredFields() &&
+    // Campos comunes a create y update.
+    function hasValidCommonFields() {
+      return request.resource.data.keys().hasAll(
+               ['nombre', 'categoria', 'monto', 'registradoPor']) &&
              isValidString('nombre', 1, 100) &&
              (request.resource.data.categoria in ['Empleado', 'Familia']) &&
              (request.resource.data.monto in [200, 300, 500, 1000, 4000]) &&
-             request.resource.data.fechaVale is timestamp &&
-             request.resource.data.createdAt is timestamp &&
              isValidString('registradoPor', 1, 100) &&
              isValidOptionalNotas() &&
              isValidOptionalAnulado() &&
              isValidOptionalBatchId();
+    }
+
+    // CREATE: esquema NUEVO estricto (siempre fechaVale + createdAt).
+    function isValidNewVale() {
+      return hasOnlyAllowedFields() &&
+             hasValidCommonFields() &&
+             request.resource.data.fechaVale is timestamp &&
+             request.resource.data.createdAt is timestamp;
+    }
+
+    // UPDATE: tolera documentos ANTIGUOS (campo 'fecha' en vez de 'fechaVale',
+    // y sin 'createdAt'). Así se pueden anular vales guardados con el esquema
+    // anterior sin relajar la validación de los documentos nuevos.
+    function isValidUpdatedVale() {
+      return hasOnlyAllowedFields() &&
+             hasValidCommonFields() &&
+             (request.resource.data.fechaVale is timestamp ||
+              request.resource.data.fecha is timestamp) &&
+             (!('createdAt' in request.resource.data) ||
+              request.resource.data.createdAt is timestamp);
     }
 
     // --------- Colección de vales ---------
@@ -100,9 +117,9 @@ service cloud.firestore {
       allow read: if true;
 
       // Escritura pública, pero SÓLO si el documento cumple el esquema.
-      // El borrado suave (anular) es un 'update' que también pasa por isValidVale().
-      allow create: if isValidVale();
-      allow update: if isValidVale();
+      allow create: if isValidNewVale();
+      // El borrado suave (anular) es un 'update'; tolera documentos antiguos.
+      allow update: if isValidUpdatedVale();
 
       // Sin borrado físico: se usa borrado suave (anulado = true).
       allow delete: if false;

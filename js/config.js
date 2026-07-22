@@ -26,7 +26,11 @@ export const firebaseConfig = {
 //  también puede acceder a Firestore directamente. Úsalo únicamente porque el
 //  equipo es de confianza y los datos no son sensibles.
 // ============================================================================
-export const ACCESS_PIN = "2025";
+export const ACCESS_PIN = "2026";
+
+// PIN de administrador para acciones sensibles (p. ej. Anular).
+// ⚠️ Mismo modelo de seguridad que ACCESS_PIN: es sólo del lado del cliente.
+export const ADMIN_PIN = "7001";
 
 // Nombre de la colección en Firestore.
 export const COLLECTION = "vales";

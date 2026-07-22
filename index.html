@@ -230,6 +230,27 @@
           </div>
         </div>
       </div>
+
+      <!-- Modal de PIN de administrador (acciones sensibles) ----------->
+      <div id="admin-pin-modal" class="modal" hidden>
+        <div class="modal-card modal-card--sm">
+          <h2>PIN de administrador</h2>
+          <p id="admin-pin-action" class="modal-sub"></p>
+          <input
+            id="admin-pin-input"
+            type="password"
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="••••"
+            maxlength="12"
+          />
+          <p id="admin-pin-error" class="error" hidden>PIN incorrecto</p>
+          <div class="modal-actions">
+            <button type="button" id="admin-pin-cancel" class="btn-secondary">Cancelar</button>
+            <button type="button" id="admin-pin-ok">Confirmar</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <script type="module" src="./js/app.js"></script>
