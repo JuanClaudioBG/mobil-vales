@@ -18,6 +18,13 @@
   box-sizing: border-box;
 }
 
+/* El atributo HTML `hidden` DEBE ganar a cualquier `display` de clase.
+   Sin esto, `.pin-screen`/`.app-screen { display: grid }` anulan `hidden`
+   y las pantallas nunca se ocultan/muestran al iniciar sesión. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font-family: var(--font);
