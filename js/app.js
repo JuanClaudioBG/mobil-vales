@@ -44,9 +44,40 @@ const emptyState = $("#empty-state");
 const totalEl = $("#total-monto");
 const countEl = $("#total-count");
 const filtroCategoria = $("#filtro-categoria");
+const filtroMes = $("#filtro-mes");
+const filtroNombre = $("#filtro-nombre");
 const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
+
+// Autocompletado
+const nombreInput = $("#nombre");
+const nombreSug = $("#nombre-sugerencias");
+const registradoPorInput = $("#registradoPor");
+const registradoPorSug = $("#registradoPor-sugerencias");
+
+// Navegación por pestañas
+const tabButtons = document.querySelectorAll(".tab");
+const views = {
+  registro: $("#view-registro"),
+  dashboard: $("#view-dashboard"),
+  admin: $("#view-admin"),
+};
+
+// Dashboard
+const dashMes = $("#dash-mes");
+const dashCount = $("#dash-count");
+const dashTotal = $("#dash-total");
+const dashEmp = $("#dash-emp");
+const dashFam = $("#dash-fam");
+const dashTop = $("#dash-top");
+const dashTopEmpty = $("#dash-top-empty");
+const dashChart = $("#dash-chart");
+
+// Admin
+const adminBody = $("#admin-body");
+const adminEmpty = $("#admin-empty");
+const btnCsv = $("#btn-csv");
 
 // Carrito de montos (multi-vale)
 const denomsEl = $("#denoms");
@@ -58,6 +89,10 @@ const btnLimpiar = $("#btn-limpiar");
 
 let allVales = [];
 const carrito = new Map(); // monto -> cantidad
+
+// Fuentes de autocompletado (nombres/registradores distintos ya usados)
+let nombresDistintos = [];
+let registradoresDistintos = [];
 
 // --- Mostrar/ocultar un error visible en la interfaz -----------------------
 function showAppError(msg) {
@@ -194,7 +229,10 @@ async function loadVales() {
     allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     loadingEl.hidden = true;
     clearAppError();
-    render();
+    refreshDerived(); // fuentes de autocompletado
+    renderHistorial();
+    renderDashboard();
+    renderAdmin();
   } catch (err) {
     loadingEl.hidden = true;
     const code = err && err.code ? ` (${err.code})` : "";
@@ -306,13 +344,97 @@ async function eliminarVale(id, nombre) {
   }
 }
 
-// --- Filtro -----------------------------------------------------------------
-filtroCategoria.addEventListener("change", render);
+// ===========================================================================
+//  Navegación por pestañas
+// ===========================================================================
+tabButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const target = btn.dataset.view;
+    tabButtons.forEach((b) => b.classList.toggle("active", b === btn));
+    for (const [name, el] of Object.entries(views)) el.hidden = name !== target;
+    // Re-render por si cambiaron datos.
+    if (target === "dashboard") renderDashboard();
+    if (target === "admin") renderAdmin();
+  });
+});
 
-// --- Render -----------------------------------------------------------------
-function render() {
-  const filtro = filtroCategoria.value;
-  const vales = filtro ? allVales.filter((v) => v.categoria === filtro) : allVales;
+// ===========================================================================
+//  Datos derivados (autocompletado)
+// ===========================================================================
+function refreshDerived() {
+  nombresDistintos = distinct(allVales.map((v) => v.nombre));
+  registradoresDistintos = distinct(allVales.map((v) => v.registradoPor));
+}
+function distinct(arr) {
+  return [...new Set(arr.filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, "es", { sensitivity: "base" })
+  );
+}
+
+// ===========================================================================
+//  Autocompletado genérico
+// ===========================================================================
+function setupAutocomplete(input, listEl, getSource, onPick) {
+  function show() {
+    const q = input.value.trim().toLowerCase();
+    const source = getSource();
+    const matches = (q
+      ? source.filter((s) => s.toLowerCase().includes(q))
+      : source
+    ).slice(0, 8);
+
+    listEl.innerHTML = "";
+    if (matches.length === 0) {
+      listEl.hidden = true;
+      return;
+    }
+    for (const m of matches) {
+      const li = document.createElement("li");
+      li.textContent = m;
+      // mousedown (no click) para que dispare antes del blur del input
+      li.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        input.value = m;
+        listEl.hidden = true;
+        if (onPick) onPick();
+      });
+      listEl.appendChild(li);
+    }
+    listEl.hidden = false;
+  }
+  input.addEventListener("focus", show);
+  input.addEventListener("input", show);
+  input.addEventListener("blur", () => setTimeout(() => (listEl.hidden = true), 120));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") listEl.hidden = true;
+  });
+}
+
+setupAutocomplete(nombreInput, nombreSug, () => nombresDistintos);
+setupAutocomplete(registradoPorInput, registradoPorSug, () => registradoresDistintos);
+
+// ===========================================================================
+//  Filtros del historial (mes + nombre + categoría, en conjunto = AND)
+// ===========================================================================
+filtroCategoria.addEventListener("change", renderHistorial);
+filtroMes.addEventListener("change", renderHistorial);
+filtroNombre.addEventListener("input", renderHistorial);
+
+// Mes actual por defecto en los selectores de mes.
+filtroMes.value = currentMonthKey();
+dashMes.value = currentMonthKey();
+
+function renderHistorial() {
+  const cat = filtroCategoria.value;
+  const mes = filtroMes.value; // "YYYY-MM" o ""
+  const nombreQ = filtroNombre.value.trim().toLowerCase();
+
+  const vales = allVales.filter((v) => {
+    if (cat && v.categoria !== cat) return false;
+    if (mes && monthKey(v.fecha) !== mes) return false;
+    if (nombreQ && !(v.nombre || "").toLowerCase().includes(nombreQ)) return false;
+    return true;
+  });
 
   tbody.innerHTML = "";
   let total = 0;
@@ -320,13 +442,14 @@ function render() {
   for (const v of vales) {
     total += Number(v.monto) || 0;
     const tr = document.createElement("tr");
+    tr.className = v.categoria === "Familia" ? "row-familia" : "row-empleado";
     tr.innerHTML = `
       <td>${escapeHtml(v.nombre)}</td>
       <td><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
-      <td>${formatFecha(v.fecha)}</td>
+      <td>${formatFechaHora(v.fecha)}</td>
       <td>${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas">${escapeHtml(v.notas || "")}</td>
     `;
@@ -346,15 +469,219 @@ function render() {
   countEl.textContent = String(vales.length);
 }
 
-// --- Utilidades -------------------------------------------------------------
-function formatFecha(fecha) {
-  if (!fecha) return "—"; // aún no confirmado por el servidor
-  const date = fecha instanceof Timestamp ? fecha.toDate() : new Date(fecha);
-  return date.toLocaleDateString("es-MX", {
+// ===========================================================================
+//  Dashboard
+// ===========================================================================
+dashMes.addEventListener("change", renderDashboard);
+
+function renderDashboard() {
+  const mes = dashMes.value || currentMonthKey();
+  const delMes = allVales.filter((v) => monthKey(v.fecha) === mes);
+
+  const total = sum(delMes.map((v) => v.monto));
+  dashCount.textContent = String(delMes.length);
+  dashTotal.textContent = money(total);
+
+  const emp = delMes.filter((v) => v.categoria === "Empleado");
+  const fam = delMes.filter((v) => v.categoria === "Familia");
+  dashEmp.textContent = `${emp.length} · ${money(sum(emp.map((v) => v.monto)))}`;
+  dashFam.textContent = `${fam.length} · ${money(sum(fam.map((v) => v.monto)))}`;
+
+  // Top 5 personas del mes por total de pesos
+  const porPersona = groupSum(delMes, (v) => v.nombre);
+  const top = [...porPersona.entries()]
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, 5);
+
+  dashTop.innerHTML = "";
+  dashTopEmpty.hidden = top.length > 0;
+  for (const [nombre, agg] of top) {
+    const li = document.createElement("li");
+    li.innerHTML =
+      `<span>${escapeHtml(nombre)}</span>` +
+      `<strong>${money(agg.total)}</strong> <span class="muted">(${agg.count})</span>`;
+    dashTop.appendChild(li);
+  }
+
+  // Gráfica: total por mes de los últimos 6 meses (terminando en `mes`)
+  const meses = lastNMonths(mes, 6);
+  const totalesPorMes = groupSum(allVales, (v) => monthKey(v.fecha));
+  const values = meses.map((m) => (totalesPorMes.get(m.key)?.total) || 0);
+  const labels = meses.map((m) => m.label);
+  drawBarChart(dashChart, labels, values);
+}
+
+function drawBarChart(canvas, labels, values) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+
+  // Tamaño lógico calculado desde el contenedor (idempotente en cada render).
+  // Si la vista está oculta, clientWidth es 0 → usamos 640 como respaldo; al
+  // abrir la pestaña se vuelve a dibujar con el ancho real.
+  const wrap = canvas.parentElement;
+  const cssW = Math.max(300, Math.min(640, wrap.clientWidth || 640));
+  const cssH = 260;
+  canvas.style.width = cssW + "px";
+  canvas.style.height = cssH + "px";
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  const padL = 56, padR = 16, padT = 20, padB = 34;
+  const w = cssW - padL - padR;
+  const h = cssH - padT - padB;
+  const max = Math.max(1, ...values);
+  const styles = getComputedStyle(document.documentElement);
+  const accent = styles.getPropertyValue("--accent").trim() || "#f5a623";
+  const muted = styles.getPropertyValue("--muted").trim() || "#97a1b0";
+  const border = styles.getPropertyValue("--border").trim() || "#303845";
+
+  // Eje base
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT + h);
+  ctx.lineTo(padL + w, padT + h);
+  ctx.stroke();
+
+  ctx.font = "12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+
+  const n = values.length;
+  const slot = w / n;
+  const barW = slot * 0.55;
+  for (let i = 0; i < n; i++) {
+    const val = values[i];
+    const bh = (val / max) * (h - 10);
+    const x = padL + slot * i + (slot - barW) / 2;
+    const y = padT + h - bh;
+    ctx.fillStyle = accent;
+    ctx.fillRect(x, y, barW, bh);
+    // valor encima
+    ctx.fillStyle = muted;
+    if (val > 0) ctx.fillText(money(val), x + barW / 2, y - 6);
+    // etiqueta mes
+    ctx.fillStyle = muted;
+    ctx.fillText(labels[i], x + barW / 2, padT + h + 18);
+  }
+}
+
+// ===========================================================================
+//  Admin (histórico por persona + exportar CSV)
+// ===========================================================================
+btnCsv.addEventListener("click", exportCsv);
+
+function adminRows() {
+  const porPersona = groupSum(allVales, (v) => v.nombre);
+  return [...porPersona.entries()]
+    .map(([nombre, agg]) => ({ nombre, count: agg.count, total: agg.total }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function renderAdmin() {
+  const rows = adminRows();
+  adminBody.innerHTML = "";
+  adminEmpty.hidden = rows.length > 0;
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${escapeHtml(r.nombre)}</td>` +
+      `<td class="num">${r.count}</td>` +
+      `<td class="num">${money(r.total)}</td>`;
+    adminBody.appendChild(tr);
+  }
+}
+
+function exportCsv() {
+  const rows = adminRows();
+  const lines = [["Nombre", "Vales", "Total"]];
+  for (const r of rows) lines.push([r.nombre, String(r.count), String(r.total)]);
+  const csv = lines
+    .map((cols) => cols.map(csvCell).join(","))
+    .join("\r\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `vales-por-persona-${currentMonthKey()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function csvCell(value) {
+  const s = String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ===========================================================================
+//  Utilidades
+// ===========================================================================
+function toDate(fecha) {
+  if (!fecha) return null;
+  return fecha instanceof Timestamp ? fecha.toDate() : new Date(fecha);
+}
+
+function formatFechaHora(fecha) {
+  const d = toDate(fecha);
+  if (!d) return "—"; // aún no confirmado por el servidor
+  const f = d.toLocaleDateString("es-MX", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
+  const h = d.toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${f} ${h}`;
+}
+
+// Clave "YYYY-MM" de una fecha (usando hora local).
+function monthKey(fecha) {
+  const d = toDate(fecha);
+  if (!d) return null;
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+}
+function currentMonthKey() {
+  return monthKey(new Date());
+}
+
+// Genera los últimos N meses terminando en `endKey` ("YYYY-MM"): [{key,label}].
+function lastNMonths(endKey, n) {
+  const [y, m] = endKey.split("-").map(Number);
+  const out = [];
+  const base = new Date(y, m - 1, 1);
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    out.push({
+      key: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"),
+      label: d.toLocaleDateString("es-MX", { month: "short" }),
+    });
+  }
+  return out;
+}
+
+function sum(arr) {
+  return arr.reduce((a, b) => a + (Number(b) || 0), 0);
+}
+function money(n) {
+  return "$" + Number(n || 0).toLocaleString("es-MX");
+}
+// Agrupa por clave -> {count, total}
+function groupSum(vales, keyFn) {
+  const map = new Map();
+  for (const v of vales) {
+    const k = keyFn(v);
+    if (k == null) continue;
+    const agg = map.get(k) || { count: 0, total: 0 };
+    agg.count += 1;
+    agg.total += Number(v.monto) || 0;
+    map.set(k, agg);
+  }
+  return map;
 }
 
 function escapeHtml(str) {
