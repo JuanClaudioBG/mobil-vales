@@ -9,12 +9,12 @@
 //     O por CLI:  npx -y firebase-tools@latest apps:sdkconfig web <APP_ID>
 //
 export const firebaseConfig = {
-  apiKey: "REEMPLAZAR_API_KEY",
-  authDomain: "REEMPLAZAR_PROJECT_ID.firebaseapp.com",
-  projectId: "REEMPLAZAR_PROJECT_ID",
-  storageBucket: "REEMPLAZAR_PROJECT_ID.appspot.com",
-  messagingSenderId: "REEMPLAZAR_SENDER_ID",
-  appId: "REEMPLAZAR_APP_ID",
+  apiKey: "AIzaSyCK5In_kXB2GQ8HrPu0c76d7CO7IkkBH9M",
+  authDomain: "mobil-vales.firebaseapp.com",
+  projectId: "mobil-vales",
+  storageBucket: "mobil-vales.firebasestorage.app",
+  messagingSenderId: "344444918306",
+  appId: "1:344444918306:web:3e24c858a85054231d087b",
 };
 
 // ============================================================================
@@ -26,7 +26,7 @@ export const firebaseConfig = {
 //  también puede acceder a Firestore directamente. Úsalo únicamente porque el
 //  equipo es de confianza y los datos no son sensibles.
 // ============================================================================
-export const ACCESS_PIN = "1234";
+export const ACCESS_PIN = "2025";
 
 // Nombre de la colección en Firestore.
 export const COLLECTION = "vales";
