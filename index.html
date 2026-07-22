@@ -51,20 +51,30 @@
           <select id="categoria" required></select>
         </label>
         <label>
-          Monto (MXN)
-          <select id="monto" required></select>
-        </label>
-        <label>
           Registrado por
           <input id="registradoPor" type="text" maxlength="100" required />
         </label>
+        <div class="full denom-field">
+          <span class="field-label">Montos (toca para agregar cada vale)</span>
+          <div id="denoms" class="denoms"></div>
+          <div id="carrito-resumen" class="carrito-resumen" hidden>
+            <ul id="carrito-lista" class="carrito-lista"></ul>
+            <div class="carrito-footer">
+              <span class="carrito-total-wrap">
+                Total: <strong id="carrito-total">$0</strong>
+                <span id="carrito-count" class="carrito-count"></span>
+              </span>
+              <button type="button" id="btn-limpiar" class="btn-secondary">Limpiar</button>
+            </div>
+          </div>
+        </div>
         <label class="full">
           Notas (opcional)
           <input id="notas" type="text" maxlength="500" />
         </label>
         <p id="form-error" class="error full" hidden></p>
         <div class="full">
-          <button type="submit">Registrar vale</button>
+          <button type="submit">Registrar vales</button>
         </div>
       </form>
 

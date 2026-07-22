@@ -257,6 +257,92 @@ td.notas {
   padding: 1.5rem 0 0.5rem;
 }
 
+/* --- Campo de montos (carrito multi-vale) --------------------------- */
+.denom-field {
+  display: grid;
+  gap: 0.5rem;
+}
+.field-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.denoms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.denom-btn {
+  position: relative;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.7rem 1.1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  min-width: 84px;
+}
+.denom-btn:hover {
+  filter: none;
+  border-color: var(--accent);
+}
+.denom-btn.selected {
+  border-color: var(--accent);
+  background: rgba(245, 166, 35, 0.15);
+  color: var(--accent);
+}
+.denom-badge:not(:empty) {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.carrito-resumen {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+}
+.carrito-lista {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.95rem;
+}
+.carrito-lista li {
+  color: var(--text);
+}
+.carrito-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.carrito-total-wrap strong {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+.carrito-count {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: 0.3rem;
+}
+
 /* --- Banner de error / estado de conexión --------------------------- */
 .app-error {
   background: #3a1d1d;

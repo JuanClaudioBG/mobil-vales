@@ -5,13 +5,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import {
   getFirestore,
   collection,
-  addDoc,
   deleteDoc,
   doc,
   getDocs,
   query,
   orderBy,
   serverTimestamp,
+  writeBatch,
   Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -48,7 +48,16 @@ const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
 
+// Carrito de montos (multi-vale)
+const denomsEl = $("#denoms");
+const carritoResumen = $("#carrito-resumen");
+const carritoLista = $("#carrito-lista");
+const carritoTotalEl = $("#carrito-total");
+const carritoCountEl = $("#carrito-count");
+const btnLimpiar = $("#btn-limpiar");
+
 let allVales = [];
+const carrito = new Map(); // monto -> cantidad
 
 // --- Mostrar/ocultar un error visible en la interfaz -----------------------
 function showAppError(msg) {
@@ -101,8 +110,73 @@ function fillSelect(select, values, includeAllOption = false) {
   }
 }
 fillSelect($("#categoria"), CATEGORIAS);
-fillSelect($("#monto"), MONTOS.map(String));
 fillSelect(filtroCategoria, CATEGORIAS, true);
+
+// --- Carrito de montos: botones de denominación ----------------------------
+const denomButtons = [];
+for (const monto of MONTOS) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "denom-btn";
+  btn.dataset.monto = String(monto);
+  btn.innerHTML =
+    `<span class="denom-amount">$${monto.toLocaleString("es-MX")}</span>` +
+    `<span class="denom-badge"></span>`;
+  btn.addEventListener("click", () => addToCart(monto));
+  denomsEl.appendChild(btn);
+  denomButtons.push(btn);
+}
+
+if (btnLimpiar) btnLimpiar.addEventListener("click", clearCart);
+
+function addToCart(monto) {
+  carrito.set(monto, (carrito.get(monto) || 0) + 1);
+  renderCart();
+}
+
+function clearCart() {
+  carrito.clear();
+  renderCart();
+}
+
+// Expande el carrito a una lista plana de montos: {200:2,300:1} -> [200,200,300]
+function cartItems() {
+  const items = [];
+  for (const [monto, cantidad] of carrito) {
+    for (let i = 0; i < cantidad; i++) items.push(monto);
+  }
+  return items;
+}
+
+function renderCart() {
+  // Badges en cada botón
+  for (const btn of denomButtons) {
+    const monto = Number(btn.dataset.monto);
+    const cantidad = carrito.get(monto) || 0;
+    const badge = btn.querySelector(".denom-badge");
+    badge.textContent = cantidad > 0 ? "×" + cantidad : "";
+    btn.classList.toggle("selected", cantidad > 0);
+  }
+
+  // Resumen
+  carritoLista.innerHTML = "";
+  let total = 0;
+  let count = 0;
+  const montosOrdenados = [...carrito.keys()].sort((a, b) => a - b);
+  for (const monto of montosOrdenados) {
+    const cantidad = carrito.get(monto);
+    total += monto * cantidad;
+    count += cantidad;
+    const li = document.createElement("li");
+    li.textContent = `$${monto.toLocaleString("es-MX")} ×${cantidad}`;
+    carritoLista.appendChild(li);
+  }
+
+  carritoTotalEl.textContent = "$" + total.toLocaleString("es-MX");
+  carritoCountEl.textContent =
+    count > 0 ? `(${count} ${count === 1 ? "vale" : "vales"})` : "";
+  carritoResumen.hidden = carrito.size === 0;
+}
 
 // --- Cargar los vales una sola vez (getDocs) --------------------------------
 // Usamos una lectura puntual en lugar de onSnapshot: el canal de streaming en
@@ -151,53 +225,70 @@ function withTimeout(promise, ms) {
 // Botón de recarga manual.
 if (refreshBtn) refreshBtn.addEventListener("click", loadVales);
 
-// --- Guardar un nuevo vale --------------------------------------------------
+// --- Guardar vales (uno por cada toque, como documentos separados) ----------
 valeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   formError.hidden = true;
 
-  const data = {
+  const base = {
     nombre: $("#nombre").value.trim(),
     categoria: $("#categoria").value,
-    monto: Number($("#monto").value),
     registradoPor: $("#registradoPor").value.trim(),
     notas: $("#notas").value.trim(),
-    fecha: serverTimestamp(),
   };
 
   // Validación del lado del cliente (reflejo de firestore.rules)
-  const problema = validar(data);
+  const problema = validarBase(base);
   if (problema) {
     formError.textContent = problema;
     formError.hidden = false;
     return;
   }
 
-  // No enviar 'notas' si está vacío (coincide con campo opcional en las reglas)
-  if (!data.notas) delete data.notas;
+  const items = cartItems(); // p. ej. [200, 200, 300, 500]
+  if (items.length === 0) {
+    formError.textContent = "Agrega al menos un vale tocando una denominación.";
+    formError.hidden = false;
+    return;
+  }
 
   const btn = valeForm.querySelector('button[type="submit"]');
   btn.disabled = true;
   btn.textContent = "Guardando…";
   try {
-    await addDoc(valesRef, data);
+    // Un documento por vale; misma fecha/nombre/categoria/registradoPor para todos.
+    const batch = writeBatch(db);
+    for (const monto of items) {
+      const ref = doc(valesRef); // ID automático
+      const docData = {
+        nombre: base.nombre,
+        categoria: base.categoria,
+        monto,
+        registradoPor: base.registradoPor,
+        fecha: serverTimestamp(),
+      };
+      if (base.notas) docData.notas = base.notas; // opcional
+      batch.set(ref, docData);
+    }
+    await batch.commit();
+
     valeForm.reset();
+    clearCart();
     $("#nombre").focus();
     await loadVales(); // recargar la lista tras guardar
   } catch (err) {
     console.error("Error al guardar:", err);
-    formError.textContent = "No se pudo guardar: " + err.message;
+    formError.textContent = "No se pudieron guardar los vales: " + err.message;
     formError.hidden = false;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Registrar vale";
+    btn.textContent = "Registrar vales";
   }
 });
 
-function validar(d) {
+function validarBase(d) {
   if (!d.nombre || d.nombre.length > 100) return "El nombre es obligatorio (máx. 100 caracteres).";
   if (!CATEGORIAS.includes(d.categoria)) return "Selecciona una categoría válida.";
-  if (!MONTOS.includes(d.monto)) return "Selecciona un monto válido.";
   if (!d.registradoPor || d.registradoPor.length > 100) return "Indica quién registra el vale (máx. 100).";
   if (d.notas && d.notas.length > 500) return "Las notas no pueden superar 500 caracteres.";
   return null;
