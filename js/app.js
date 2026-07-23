@@ -8,8 +8,6 @@ import {
   doc,
   updateDoc,
   getDocs,
-  query,
-  orderBy,
   serverTimestamp,
   writeBatch,
   Timestamp,
@@ -340,9 +338,17 @@ async function loadVales() {
   if (refreshBtn) refreshBtn.disabled = true;
 
   try {
-    const q = query(valesRef, orderBy("fecha", "desc"));
-    const snapshot = await withTimeout(getDocs(q), 15000);
+    // Sin orderBy en la consulta: un orderBy("fecha") o ("fechaVale") EXCLUYE
+    // los documentos que no tienen ese campo. Los vales antiguos usan 'fecha'
+    // y los nuevos 'fechaVale', así que traemos todos y ordenamos en el cliente
+    // por valeDate() (fechaVale → fecha → createdAt).
+    const snapshot = await withTimeout(getDocs(valesRef), 15000);
     allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+    allVales.sort((a, b) => {
+      const ta = valeDate(a) ? valeDate(a).getTime() : 0;
+      const tb = valeDate(b) ? valeDate(b).getTime() : 0;
+      return tb - ta; // más reciente primero
+    });
     loadingEl.hidden = true;
     clearAppError();
     refreshDerived(); // fuentes de autocompletado
