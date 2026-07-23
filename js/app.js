@@ -719,12 +719,12 @@ function renderHistorial() {
     tr.className = v.categoria === "Familia" ? "row-familia" : "row-empleado";
     tr.innerHTML = `
       <td>${escapeHtml(v.nombre)}</td>
-      <td><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
+      <td class="col-categoria"><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
       <td>${formatFechaVale(v)}</td>
-      <td>${escapeHtml(v.registradoPor || "")}</td>
+      <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
     `;
     const acciones = document.createElement("td");
