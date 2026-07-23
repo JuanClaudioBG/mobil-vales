@@ -862,9 +862,9 @@ function renderAdmin() {
   for (const r of rows) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td>${escapeHtml(r.nombre)}</td>` +
-      `<td class="num">${r.count}</td>` +
-      `<td class="num">${money(r.total)}</td>`;
+      `<td data-label="Nombre">${escapeHtml(r.nombre)}</td>` +
+      `<td class="num" data-label="Vales">${r.count}</td>` +
+      `<td class="num" data-label="Total">${money(r.total)}</td>`;
     adminBody.appendChild(tr);
   }
 
