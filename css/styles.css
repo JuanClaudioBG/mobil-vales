@@ -25,12 +25,20 @@
   display: none !important;
 }
 
+html {
+  /* Evita que iOS reescale el texto al girar el dispositivo */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
+  /* Quita el destello gris al tocar en iOS */
+  -webkit-tap-highlight-color: transparent;
 }
 
 h1 {
@@ -48,6 +56,7 @@ button {
   color: var(--accent-ink);
   font-weight: 600;
   transition: filter 0.15s ease;
+  touch-action: manipulation; /* elimina el retardo de 300ms al tocar en iOS */
 }
 button:hover {
   filter: brightness(1.08);
@@ -82,9 +91,13 @@ select:focus {
 /* --- Pantalla de PIN ------------------------------------------------ */
 .pin-screen {
   min-height: 100vh;
+  min-height: 100dvh; /* iOS: altura real descontando barras dinámicas */
   display: grid;
   place-items: center;
   padding: 1rem;
+  /* Respeta el notch / bordes seguros (0 en escritorio) */
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
 }
 .pin-card {
   background: var(--surface);
@@ -114,6 +127,11 @@ select:focus {
   max-width: 1000px;
   margin: 0 auto;
   padding: 1rem;
+  /* Respeta el notch superior y los bordes seguros (0 en escritorio) */
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
   display: grid;
   gap: 1rem;
 }
@@ -191,6 +209,7 @@ select:focus {
 }
 .table-wrap {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch; /* scroll con inercia en iOS */
 }
 table {
   width: 100%;
@@ -527,7 +546,7 @@ tr.row-anulada td {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom)); /* sobre el home indicator */
   transform: translate(-50%, 20px);
   z-index: 110;
   background: #14532d;
@@ -749,5 +768,60 @@ tr.row-familia td {
   }
   .topbar {
     align-items: flex-start;
+  }
+}
+
+/* --- Dispositivos táctiles (iPhone / iPad): objetivos de toque más grandes
+   y sin zoom automático en inputs. Basado en el tipo de puntero, NO en el
+   ancho, así que no afecta a ratón/escritorio (pointer: fine). ------------- */
+@media (pointer: coarse) {
+  /* iOS hace zoom al enfocar un input con letra <16px; lo forzamos a 16px.
+     Los PIN (más grandes, con selector más específico) no se ven afectados. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  .denom-btn {
+    min-height: 52px;
+    min-width: 96px;
+  }
+  .denom-minus {
+    width: 30px;
+    height: 30px;
+    font-size: 1.15rem;
+  }
+  .btn-anular,
+  .btn-eliminar {
+    min-height: 40px;
+    padding-inline: 0.7rem;
+  }
+  .tab {
+    padding: 0.55rem 1.05rem;
+  }
+  /* Sin efecto hover pegajoso en táctil */
+  button:hover {
+    filter: none;
+  }
+}
+
+/* --- Teléfonos estrechos: filtros apilados y barra de pestañas fija ------ */
+@media (max-width: 768px) {
+  .filtros label {
+    flex: 1 1 46%;
+  }
+  .filtros input,
+  .filtros select {
+    width: 100%;
+    min-width: 0;
+  }
+  /* La navegación se mantiene visible al desplazar */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--bg);
+    padding-top: max(0.4rem, env(safe-area-inset-top));
+    padding-bottom: 0.4rem;
   }
 }
