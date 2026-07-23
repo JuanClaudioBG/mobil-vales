@@ -725,7 +725,7 @@ function renderHistorial() {
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
       <td>${formatFechaVale(v)}</td>
       <td>${escapeHtml(v.registradoPor || "")}</td>
-      <td class="notas">${escapeHtml(v.notas || "")}</td>
+      <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
     `;
     const acciones = document.createElement("td");
     const btn = document.createElement("button");
@@ -881,12 +881,12 @@ function renderAdmin() {
       : "row-empleado";
     tr.innerHTML = `
       <td>${escapeHtml(v.nombre)}</td>
-      <td><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
+      <td class="col-categoria"><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
       <td>${formatFechaVale(v)}</td>
-      <td>${escapeHtml(v.registradoPor || "")}</td>
+      <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td>${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
     `;
     const acciones = document.createElement("td");

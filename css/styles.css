@@ -805,15 +805,19 @@ tr.row-familia td {
   }
 }
 
-/* --- Teléfonos estrechos: filtros apilados y barra de pestañas fija ------ */
+/* --- Teléfonos estrechos (≤768px): arreglos de layout móvil -------------- */
 @media (max-width: 768px) {
-  .filtros label {
-    flex: 1 1 46%;
-  }
-  .filtros input,
-  .filtros select {
+  /* Pestañas: ancho completo, las 3 en una sola fila */
+  .tabs {
+    display: flex;
     width: 100%;
-    min-width: 0;
+    gap: 0.3rem;
+  }
+  .tab {
+    flex: 1;
+    font-size: 0.8rem;
+    padding: 0.4rem 0.2rem;
+    text-align: center;
   }
   /* La navegación se mantiene visible al desplazar */
   .topbar {
@@ -823,5 +827,55 @@ tr.row-familia td {
     background: var(--bg);
     padding-top: max(0.4rem, env(safe-area-inset-top));
     padding-bottom: 0.4rem;
+  }
+
+  /* Formulario: inputs y selects nunca exceden el ancho de la pantalla */
+  .form-grid > * {
+    min-width: 0;
+  }
+  .form-grid input,
+  .form-grid select {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Denominaciones: rejilla de 3 columnas (3 en la 1ª fila, 2 en la 2ª) */
+  .denoms {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+  }
+  .denom-item {
+    width: 100%;
+  }
+  .denom-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Filtros del historial: apilados a ancho completo */
+  .filtros {
+    flex-direction: column;
+  }
+  .filtros label {
+    flex: none;
+    width: 100%;
+  }
+  .filtros input,
+  .filtros select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Tablas más compactas; columnas no esenciales ocultas.
+     (overflow-x: auto en .table-wrap queda como último recurso.) */
+  table {
+    font-size: 0.8rem;
+  }
+  .col-notas,
+  .col-categoria,
+  .col-registrado {
+    display: none;
   }
 }
