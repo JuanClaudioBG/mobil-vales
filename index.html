@@ -68,15 +68,17 @@
             <input id="registradoPor" type="text" maxlength="100" autocomplete="off" required />
             <ul id="registradoPor-sugerencias" class="suggestions" hidden></ul>
           </label>
-          <div class="fecha-field">
-            <label class="check-inline">
-              <input type="checkbox" id="fecha-anterior-toggle" />
-              Registrar vale de fecha anterior
+          <div class="fecha-field" id="fecha-field">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" id="fecha-anterior-toggle" />
+                <span class="switch-slider"></span>
+              </span>
+              <span class="switch-label" id="fecha-switch-label">📅 ¿Vale de fecha anterior?</span>
             </label>
-            <label id="fecha-vale-wrap" hidden>
-              Fecha del vale
+            <div id="fecha-vale-wrap" hidden>
               <input id="fecha-vale" type="date" />
-            </label>
+            </div>
           </div>
           <div class="full denom-field">
             <span class="field-label">Montos (toca para agregar cada vale)</span>
@@ -161,8 +163,11 @@
           </div>
         </div>
         <div class="card">
-          <h2>Top 5 personas del mes</h2>
-          <ol id="dash-top" class="top-list"></ol>
+          <div class="dash-top-head">
+            <h2>Top personas del mes</h2>
+            <button type="button" id="dash-vertodos" class="link-btn" hidden>Ver todos</button>
+          </div>
+          <div id="dash-top" class="leaderboard"></div>
           <p id="dash-top-empty" class="empty" hidden>Sin datos para este mes.</p>
         </div>
         <div class="card">
@@ -170,6 +175,7 @@
           <div class="chart-wrap">
             <canvas id="dash-chart" width="640" height="260"></canvas>
           </div>
+          <div id="dash-legend" class="chart-legend"></div>
         </div>
       </section>
 

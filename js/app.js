@@ -22,6 +22,8 @@ import {
   MONTOS,
   PERSONAS,
   DEPARTAMENTOS,
+  PERSONA_COLORS,
+  COLOR_DEFAULT,
 } from "./config.js";
 
 // --- Inicialización de Firebase --------------------------------------------
@@ -57,6 +59,8 @@ const catAuto = $("#cat-auto");
 const fechaValeInput = $("#fecha-vale");
 const fechaAnteriorToggle = $("#fecha-anterior-toggle");
 const fechaValeWrap = $("#fecha-vale-wrap");
+const fechaField = $("#fecha-field");
+const fechaSwitchLabel = $("#fecha-switch-label");
 
 // Confirmación / toast
 const toastEl = $("#toast");
@@ -99,6 +103,8 @@ const dashFam = $("#dash-fam");
 const dashTop = $("#dash-top");
 const dashTopEmpty = $("#dash-top-empty");
 const dashChart = $("#dash-chart");
+const dashLegend = $("#dash-legend");
+const dashVerTodos = $("#dash-vertodos");
 
 // Admin
 const adminBody = $("#admin-body");
@@ -121,6 +127,7 @@ const carrito = new Map(); // monto -> cantidad
 const MAX_VALES = 20; // tope de vales por registro
 let pendingSave = null; // payload en espera de confirmación
 let saving = false; // evita doble envío
+let dashExpanded = false; // leaderboard: mostrar todos vs top 5
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -210,12 +217,16 @@ function updateCategoriaAuto() {
 
 // Fecha del vale por defecto = hoy (oculta salvo que se active el backdating).
 fechaValeInput.value = todayInput();
-fechaAnteriorToggle.addEventListener("change", () => {
-  fechaValeWrap.hidden = !fechaAnteriorToggle.checked;
-  if (fechaAnteriorToggle.checked && !fechaValeInput.value) {
-    fechaValeInput.value = todayInput();
-  }
-});
+fechaAnteriorToggle.addEventListener("change", updateFechaToggle);
+function updateFechaToggle() {
+  const on = fechaAnteriorToggle.checked;
+  fechaValeWrap.hidden = !on;
+  fechaField.classList.toggle("active", on);
+  fechaSwitchLabel.textContent = on
+    ? "📅 Fecha del vale:"
+    : "📅 ¿Vale de fecha anterior?";
+  if (on && !fechaValeInput.value) fechaValeInput.value = todayInput();
+}
 
 // --- Carrito de montos: botones de denominación (con + y −) -----------------
 const denomButtons = [];
@@ -521,8 +532,8 @@ async function doSave() {
     clearCart();
     updateCategoriaAuto();
     fechaAnteriorToggle.checked = false;
-    fechaValeWrap.hidden = true;
     fechaValeInput.value = todayInput();
+    updateFechaToggle(); // oculta el picker, quita el resaltado y restaura la etiqueta
     personaSelect.focus();
     showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
     await loadVales();
@@ -746,7 +757,18 @@ function renderHistorial() {
 // ===========================================================================
 //  Dashboard
 // ===========================================================================
-dashMes.addEventListener("change", renderDashboard);
+dashMes.addEventListener("change", () => {
+  dashExpanded = false; // al cambiar de mes, colapsa el leaderboard
+  renderDashboard();
+});
+dashVerTodos.addEventListener("click", () => {
+  dashExpanded = !dashExpanded;
+  renderDashboard();
+});
+
+function personaColor(nombre) {
+  return PERSONA_COLORS[nombre] || COLOR_DEFAULT;
+}
 
 function renderDashboard() {
   const mes = dashMes.value || currentMonthKey();
@@ -761,37 +783,84 @@ function renderDashboard() {
   dashEmp.textContent = `${emp.length} · ${money(sum(emp.map((v) => v.monto)))}`;
   dashFam.textContent = `${fam.length} · ${money(sum(fam.map((v) => v.monto)))}`;
 
-  // Top 5 personas del mes por total de pesos
-  const porPersona = groupSum(delMes, (v) => v.nombre);
-  const top = [...porPersona.entries()]
-    .sort((a, b) => b[1].total - a[1].total)
-    .slice(0, 5);
+  // Leaderboard del mes (ordenado por total desc)
+  const ranking = [...groupSum(delMes, (v) => v.nombre).entries()].sort(
+    (a, b) => b[1].total - a[1].total
+  );
+  renderLeaderboard(ranking);
 
-  dashTop.innerHTML = "";
-  dashTopEmpty.hidden = top.length > 0;
-  for (const [nombre, agg] of top) {
-    const li = document.createElement("li");
-    li.innerHTML =
-      `<span>${escapeHtml(nombre)}</span>` +
-      `<strong>${money(agg.total)}</strong> <span class="muted">(${agg.count})</span>`;
-    dashTop.appendChild(li);
-  }
-
-  // Gráfica: total por mes de los últimos 6 meses (terminando en `mes`)
-  const meses = lastNMonths(mes, 6);
-  const totalesPorMes = groupSum(activos(allVales), (v) => monthKey(valeDate(v)));
-  const values = meses.map((m) => (totalesPorMes.get(m.key)?.total) || 0);
-  const labels = meses.map((m) => m.label);
-  drawBarChart(dashChart, labels, values);
+  // Gráfica apilada por persona (últimos 6 meses terminando en `mes`)
+  renderStackedChart(mes);
 }
 
-function drawBarChart(canvas, labels, values) {
+function renderLeaderboard(ranking) {
+  dashTopEmpty.hidden = ranking.length > 0;
+  dashVerTodos.hidden = ranking.length <= 5;
+  dashVerTodos.textContent = dashExpanded ? "Ver menos" : "Ver todos";
+
+  const top1 = ranking.length ? ranking[0][1].total : 0;
+  const visibles = dashExpanded ? ranking : ranking.slice(0, 5);
+
+  dashTop.innerHTML = "";
+  visibles.forEach(([nombre, agg], i) => {
+    const pct = top1 ? Math.round((agg.total / top1) * 100) : 0;
+    const color = personaColor(nombre);
+    const row = document.createElement("div");
+    row.className = "lb-row" + (i === 0 ? " lb-row--first" : "");
+    row.innerHTML =
+      `<span class="lb-rank">${i + 1}</span>` +
+      `<span class="lb-dot" style="background:${color}"></span>` +
+      `<span class="lb-name">${escapeHtml(nombre)}</span>` +
+      `<span class="lb-bar"><span class="lb-bar-fill" style="width:${pct}%;background:${color}"></span></span>` +
+      `<span class="lb-amount">${money(agg.total)} <span class="muted">(${agg.count})</span></span>`;
+    dashTop.appendChild(row);
+  });
+}
+
+function renderStackedChart(mes) {
+  const meses = lastNMonths(mes, 6);
+  const keySet = new Set(meses.map((m) => m.key));
+
+  // Vales dentro de la ventana de 6 meses.
+  const enVentana = activos(allVales).filter((v) => keySet.has(monthKey(valeDate(v))));
+
+  // Matriz mes -> (persona -> total) y totales por persona en la ventana.
+  const matrix = new Map(meses.map((m) => [m.key, new Map()]));
+  const totPersona = new Map();
+  for (const v of enVentana) {
+    const mk = monthKey(valeDate(v));
+    const monto = Number(v.monto) || 0;
+    const cell = matrix.get(mk);
+    cell.set(v.nombre, (cell.get(v.nombre) || 0) + monto);
+    totPersona.set(v.nombre, (totPersona.get(v.nombre) || 0) + monto);
+  }
+  // Orden de apilado y leyenda: por total desc (segmento más grande abajo).
+  const personas = [...totPersona.keys()].sort(
+    (a, b) => totPersona.get(b) - totPersona.get(a)
+  );
+
+  drawStackedBarChart(dashChart, meses, matrix, personas);
+  renderLegend(personas);
+}
+
+function renderLegend(personas) {
+  dashLegend.innerHTML = "";
+  for (const nombre of personas) {
+    const item = document.createElement("span");
+    item.className = "legend-item";
+    item.innerHTML =
+      `<span class="legend-dot" style="background:${personaColor(nombre)}"></span>` +
+      escapeHtml(nombre);
+    dashLegend.appendChild(item);
+  }
+}
+
+function drawStackedBarChart(canvas, meses, matrix, personas) {
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
 
-  // Tamaño lógico calculado desde el contenedor (idempotente en cada render).
-  // Si la vista está oculta, clientWidth es 0 → usamos 640 como respaldo; al
-  // abrir la pestaña se vuelve a dibujar con el ancho real.
+  // Tamaño lógico desde el contenedor (idempotente); si la vista está oculta,
+  // clientWidth es 0 → respaldo 640; al abrir la pestaña se redibuja bien.
   const wrap = canvas.parentElement;
   const cssW = Math.max(300, Math.min(640, wrap.clientWidth || 640));
   const cssH = 260;
@@ -805,9 +874,16 @@ function drawBarChart(canvas, labels, values) {
   const padL = 56, padR = 16, padT = 20, padB = 34;
   const w = cssW - padL - padR;
   const h = cssH - padT - padB;
-  const max = Math.max(1, ...values);
+
+  const mesesKeys = meses.map((m) => m.key);
+  const totalesMes = mesesKeys.map((k) => {
+    let s = 0;
+    for (const t of matrix.get(k).values()) s += t;
+    return s;
+  });
+  const max = Math.max(1, ...totalesMes);
+
   const styles = getComputedStyle(document.documentElement);
-  const accent = styles.getPropertyValue("--accent").trim() || "#f5a623";
   const muted = styles.getPropertyValue("--muted").trim() || "#97a1b0";
   const border = styles.getPropertyValue("--border").trim() || "#303845";
 
@@ -822,22 +898,31 @@ function drawBarChart(canvas, labels, values) {
   ctx.font = "12px system-ui, sans-serif";
   ctx.textAlign = "center";
 
-  const n = values.length;
+  const n = meses.length;
   const slot = w / n;
   const barW = slot * 0.55;
+  const usableH = h - 10;
+
   for (let i = 0; i < n; i++) {
-    const val = values[i];
-    const bh = (val / max) * (h - 10);
+    const cell = matrix.get(mesesKeys[i]);
     const x = padL + slot * i + (slot - barW) / 2;
-    const y = padT + h - bh;
-    ctx.fillStyle = accent;
-    ctx.fillRect(x, y, barW, bh);
-    // valor encima
+    let yTop = padT + h; // apila desde la base hacia arriba
+    for (const nombre of personas) {
+      const val = cell.get(nombre) || 0;
+      if (val <= 0) continue;
+      const segH = (val / max) * usableH;
+      yTop -= segH;
+      ctx.fillStyle = personaColor(nombre);
+      ctx.fillRect(x, yTop, barW, segH);
+    }
+    // Total encima de la barra
+    if (totalesMes[i] > 0) {
+      ctx.fillStyle = muted;
+      ctx.fillText(money(totalesMes[i]), x + barW / 2, yTop - 6);
+    }
+    // Etiqueta de mes
     ctx.fillStyle = muted;
-    if (val > 0) ctx.fillText(money(val), x + barW / 2, y - 6);
-    // etiqueta mes
-    ctx.fillStyle = muted;
-    ctx.fillText(labels[i], x + barW / 2, padT + h + 18);
+    ctx.fillText(meses[i].label, x + barW / 2, padT + h + 18);
   }
 }
 

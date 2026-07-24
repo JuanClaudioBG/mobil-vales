@@ -71,3 +71,23 @@ export const PERSONAS = [
   { nombre: "Alex", categoria: "Empleado", depto: "Logística" },
   { nombre: "Juan Ramon", categoria: "Empleado", depto: "Logística" },
 ];
+
+// Color por persona (gráfica del dashboard y leaderboard).
+export const PERSONA_COLORS = {
+  "Juan Jr": "#3aa0ff",
+  "Andrea": "#22c98e",
+  "Lorena": "#f5a623",
+  "Juan C Mayor": "#e6567a",
+  "Erick": "#9b7bf0",
+  "Marcelino": "#5bc8ff",
+  "Karen": "#7fe0b0",
+  "Aracely": "#ffd166",
+  "Yankee": "#ff6b6b",
+  "Juanjo": "#c9a8ff",
+  "Héctor": "#4ecdc4",
+  "Alex": "#ff9f43",
+  "Juan Ramon": "#a8e6cf",
+  "Operaciones (General)": "#e31e24",
+};
+// Color de respaldo para nombres no listados (p. ej. datos antiguos).
+export const COLOR_DEFAULT = "#8892a0";
