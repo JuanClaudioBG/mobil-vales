@@ -59,6 +59,7 @@ export const PERSONAS = [
   // Empleados — Ventas
   { nombre: "Erick", categoria: "Empleado", depto: "Ventas" },
   { nombre: "Marcelino", categoria: "Empleado", depto: "Ventas" },
+  { nombre: "Ventas (General)", categoria: "Empleado", depto: "Ventas" },
   // Empleados — Administración
   { nombre: "Karen", categoria: "Empleado", depto: "Administración" },
   { nombre: "Aracely", categoria: "Empleado", depto: "Administración" },
@@ -88,6 +89,7 @@ export const PERSONA_COLORS = {
   "Alex": "#ff9f43",
   "Juan Ramon": "#a8e6cf",
   "Operaciones (General)": "#e31e24",
+  "Ventas (General)": "#d946ef",
 };
 // Color de respaldo para nombres no listados (p. ej. datos antiguos).
 export const COLOR_DEFAULT = "#8892a0";
