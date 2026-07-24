@@ -228,6 +228,20 @@ function updateFechaToggle() {
   if (on && !fechaValeInput.value) fechaValeInput.value = todayInput();
 }
 
+// Abrir el selector de fecha/mes al tocar cualquier parte del campo
+// (no sólo el pequeño ícono del calendario). Mejora el acceso en móvil.
+for (const el of [fechaValeInput, filtroMes, dashMes]) {
+  el.addEventListener("click", () => {
+    if (typeof el.showPicker === "function") {
+      try {
+        el.showPicker();
+      } catch (_) {
+        /* algunos navegadores lo restringen; el toque nativo sigue funcionando */
+      }
+    }
+  });
+}
+
 // --- Carrito de montos: botones de denominación (con + y −) -----------------
 const denomButtons = [];
 for (const monto of MONTOS) {

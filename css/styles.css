@@ -518,6 +518,31 @@ tr.row-anulada td {
 }
 #fecha-vale-wrap input {
   width: 100%;
+  cursor: pointer;
+}
+
+/* El ícono del calendario venía negro sobre fondo oscuro (no se veía).
+   Lo invertimos a blanco, lo agrandamos y le damos afordancia de clic.
+   Aplica a los inputs de fecha y de mes. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.6);
+  opacity: 0.9;
+  cursor: pointer;
+  font-size: 1.15rem;
+  padding: 2px;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: rgba(245, 166, 35, 0.25);
+}
+/* En el campo de fecha activo (ámbar), tíntalo de acento para que resalte */
+.fecha-field.active input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(72%) sepia(60%) saturate(700%) hue-rotate(350deg) brightness(102%);
+  opacity: 1;
 }
 
 /* --- Modal de confirmación ------------------------------------------ */
