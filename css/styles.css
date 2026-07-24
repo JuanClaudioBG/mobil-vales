@@ -991,6 +991,19 @@ tr.row-familia td {
   button:hover {
     filter: none;
   }
+  /* iOS dibuja los inputs de fecha/mes altos y con el texto centrado, lo que
+     se ve "deforme". Normalizamos su apariencia para que se vean como los
+     demás campos (misma altura, texto a la izquierda). Siguen abriendo el
+     selector nativo al tocarlos. En escritorio (pointer: fine) no aplica, así
+     que el ícono del calendario ahí se conserva. */
+  input[type="date"],
+  input[type="month"] {
+    -webkit-appearance: none;
+    appearance: none;
+    text-align: left;
+    min-height: 2.7rem;
+    line-height: 1.4;
+  }
 }
 
 /* --- Teléfonos estrechos (≤768px): arreglos de layout móvil -------------- */
