@@ -822,11 +822,23 @@ tr.row-familia td {
   }
   .app-screen,
   .topbar,
+  .view,
   .card,
-  .denoms {
+  .form-grid,
+  .fecha-field,
+  .check-inline,
+  .denom-field,
+  .denoms,
+  .carrito-resumen,
+  .table-wrap,
+  .chart-wrap,
+  .stat-grid,
+  .stat-card {
+    min-width: 0;
     max-width: 100%;
   }
   .app-screen {
+    width: 100%;
     overflow-x: hidden;
   }
 
@@ -849,35 +861,40 @@ tr.row-familia td {
   }
   .tabs {
     display: flex;
+    flex-wrap: nowrap;
     width: 100%;
     gap: 0.3rem;
   }
   .tab {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
     font-size: 0.75rem;
     padding: 0.5rem 0.1rem;
     text-align: center;
   }
 
   /* Formulario: la tarjeta no desborda; inputs/selects a ancho completo */
-  .form-grid {
-    overflow: hidden;
-  }
   .form-grid > * {
     min-width: 0;
   }
-  .form-grid input,
-  .form-grid select {
+  input,
+  select {
     width: 100%;
     max-width: 100%;
+    min-width: 0;
     box-sizing: border-box;
   }
 
   /* Casilla "fecha anterior": la etiqueta puede envolver en varias líneas */
   .check-inline {
     align-items: flex-start;
+    width: 100%;
+    overflow-wrap: anywhere;
   }
-  .check-inline input {
+  .check-inline input[type="checkbox"] {
+    width: auto;
+    max-width: none;
+    min-width: auto;
     margin-top: 0.15rem;
     flex: 0 0 auto;
   }
@@ -885,11 +902,12 @@ tr.row-familia td {
   /* Denominaciones: rejilla de 2 columnas (más aire, $500 no se corta) */
   .denoms {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.6rem;
   }
   .denom-item {
     width: 100%;
+    min-width: 0;
   }
   .denom-btn {
     width: 100%;
@@ -911,10 +929,25 @@ tr.row-familia td {
     min-width: 0;
   }
 
-  /* Tablas más compactas; columnas no esenciales ocultas.
-     (overflow-x: auto en .table-wrap queda como último recurso.) */
+  /* Tablas más compactas y contenidas: no crean un segundo scroll horizontal. */
+  .table-wrap,
+  .chart-wrap {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
   table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
     font-size: 0.8rem;
+  }
+  th,
+  td {
+    padding: 0.5rem 0.35rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   /* Historial: sólo Nombre / Monto / Fecha / Anular */
   #view-registro table {
@@ -922,8 +955,36 @@ tr.row-familia td {
   }
   .col-notas,
   .col-categoria,
-  .col-registrado {
+  .col-registrado,
+  .col-estado {
     display: none;
+  }
+  #view-registro th:last-child,
+  #view-registro td:last-child,
+  #view-admin table:not(.resumen-table) th:last-child,
+  #view-admin table:not(.resumen-table) td:last-child {
+    width: 4rem;
+  }
+  .btn-anular {
+    max-width: 100%;
+    padding-inline: 0.35rem;
+    font-size: 0.72rem;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat-card strong,
+  .top-list li > span:first-child,
+  .confirm-summary dd {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .toast {
+    width: calc(100% - 2rem);
+    max-width: calc(100% - 2rem);
+    text-align: center;
   }
 
   /* Admin "Resumen por persona": tabla → tarjetas apiladas.

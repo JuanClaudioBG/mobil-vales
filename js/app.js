@@ -887,7 +887,7 @@ function renderAdmin() {
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
       <td>${formatFechaVale(v)}</td>
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
-      <td>${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
+      <td class="col-estado">${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
     `;
     const acciones = document.createElement("td");
     if (!anulado) {
