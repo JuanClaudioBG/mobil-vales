@@ -36,11 +36,12 @@ export const ADMIN_PIN = "7001";
 export const COLLECTION = "vales";
 
 // Opciones permitidas (deben coincidir con firestore.rules).
-export const CATEGORIAS = ["Empleado", "Familia"];
+export const CATEGORIAS = ["Empleado", "Familia", "Socio"];
 export const MONTOS = [200, 300, 500, 1000, 4000];
 
 // Orden de los departamentos en el selector de persona.
 export const DEPARTAMENTOS = [
+  "Socios",
   "Familia",
   "Ventas",
   "Administración",
@@ -51,11 +52,13 @@ export const DEPARTAMENTOS = [
 // Directorio fijo de personas. `categoria` se autocompleta a partir de aquí.
 // `label` (opcional) es el texto a mostrar en el selector.
 export const PERSONAS = [
+  // Socios
+  { nombre: "Eugenio Galán", categoria: "Socio", depto: "Socios" },
   // Familia
   { nombre: "Juan Jr", categoria: "Familia", depto: "Familia" },
   { nombre: "Andrea", categoria: "Familia", depto: "Familia" },
   { nombre: "Lorena", categoria: "Familia", depto: "Familia" },
-  { nombre: "Juan C Mayor", categoria: "Familia", depto: "Familia", label: "Juan C Mayor (Jefe / Familia)" },
+  { nombre: "Juan Claudio Belloc", categoria: "Familia", depto: "Familia", label: "Juan Claudio Belloc (Jefe · Socio · Familia)" },
   // Empleados — Ventas
   { nombre: "Erick", categoria: "Empleado", depto: "Ventas" },
   { nombre: "Marcelino", categoria: "Empleado", depto: "Ventas" },
@@ -75,10 +78,11 @@ export const PERSONAS = [
 
 // Color por persona (gráfica del dashboard y leaderboard).
 export const PERSONA_COLORS = {
+  "Eugenio Galán": "#7c4dff",
   "Juan Jr": "#3aa0ff",
   "Andrea": "#22c98e",
   "Lorena": "#f5a623",
-  "Juan C Mayor": "#e6567a",
+  "Juan Claudio Belloc": "#e6567a",
   "Erick": "#9b7bf0",
   "Marcelino": "#5bc8ff",
   "Karen": "#7fe0b0",

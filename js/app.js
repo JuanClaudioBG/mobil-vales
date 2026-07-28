@@ -115,6 +115,7 @@ const dashCount = $("#dash-count");
 const dashTotal = $("#dash-total");
 const dashEmp = $("#dash-emp");
 const dashFam = $("#dash-fam");
+const dashSoc = $("#dash-soc");
 const dashTop = $("#dash-top");
 const dashTopEmpty = $("#dash-top-empty");
 const dashChart = $("#dash-chart");
@@ -223,7 +224,7 @@ function updateCategoriaAuto() {
   const p = personaPorNombre.get(personaSelect.value);
   if (p) {
     catAuto.textContent = p.categoria;
-    catAuto.className = "cat-auto badge badge--" + (p.categoria === "Familia" ? "familia" : "empleado");
+    catAuto.className = "cat-auto badge badge--" + catSlug(p.categoria);
   } else {
     catAuto.textContent = "—";
     catAuto.className = "cat-auto";
@@ -979,10 +980,10 @@ function renderHistorial() {
   for (const v of vales) {
     total += Number(v.monto) || 0;
     const tr = document.createElement("tr");
-    tr.className = v.categoria === "Familia" ? "row-familia" : "row-empleado";
+    tr.className = "row-" + catSlug(v.categoria);
     tr.innerHTML = `
       <td>${escapeHtml(v.nombre)}</td>
-      <td class="col-categoria"><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
+      <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
@@ -1032,8 +1033,10 @@ function renderDashboard() {
 
   const emp = delMes.filter((v) => v.categoria === "Empleado");
   const fam = delMes.filter((v) => v.categoria === "Familia");
+  const soc = delMes.filter((v) => v.categoria === "Socio");
   dashEmp.textContent = `${emp.length} · ${money(sum(emp.map((v) => v.monto)))}`;
   dashFam.textContent = `${fam.length} · ${money(sum(fam.map((v) => v.monto)))}`;
+  dashSoc.textContent = `${soc.length} · ${money(sum(soc.map((v) => v.monto)))}`;
 
   // Leaderboard del mes (ordenado por total desc)
   const ranking = [...groupSum(delMes, (v) => v.nombre).entries()].sort(
@@ -1211,14 +1214,10 @@ function renderAdmin() {
   for (const v of allVales) {
     const anulado = !!v.anulado;
     const tr = document.createElement("tr");
-    tr.className = anulado
-      ? "row-anulada"
-      : v.categoria === "Familia"
-      ? "row-familia"
-      : "row-empleado";
+    tr.className = anulado ? "row-anulada" : "row-" + catSlug(v.categoria);
     tr.innerHTML = `
       <td>${escapeHtml(v.nombre)}</td>
-      <td class="col-categoria"><span class="badge badge--${v.categoria === "Familia" ? "familia" : "empleado"}">${escapeHtml(
+      <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>
       <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
@@ -1363,6 +1362,13 @@ function groupSum(vales, keyFn) {
     map.set(k, agg);
   }
   return map;
+}
+
+// Sufijo de clase CSS por categoría (badge--*, row-*).
+function catSlug(categoria) {
+  if (categoria === "Familia") return "familia";
+  if (categoria === "Socio") return "socio";
+  return "empleado";
 }
 
 function escapeHtml(str) {

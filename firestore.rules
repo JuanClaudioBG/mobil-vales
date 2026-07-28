@@ -25,7 +25,7 @@ rules_version = '2';
 //  ID de documento: automático (addDoc)
 //  Campos:
 //    - nombre:         string   (requerido, 1..100)
-//    - categoria:      string   (requerido, en ['Empleado','Familia'])
+//    - categoria:      string   (requerido, en ['Empleado','Familia','Socio'])
 //    - monto:          number   (requerido, en [200, 300, 500, 1000, 4000])
 //    - fechaVale:      timestamp(requerido; fecha del vale elegida por el usuario)
 //    - createdAt:      timestamp(requerido; serverTimestamp() del sistema)
@@ -91,7 +91,7 @@ service cloud.firestore {
       return request.resource.data.keys().hasAll(
                ['nombre', 'categoria', 'monto', 'registradoPor']) &&
              isValidString('nombre', 1, 100) &&
-             (request.resource.data.categoria in ['Empleado', 'Familia']) &&
+             (request.resource.data.categoria in ['Empleado', 'Familia', 'Socio']) &&
              (request.resource.data.monto in [200, 300, 500, 1000, 4000]) &&
              isValidString('registradoPor', 1, 100) &&
              isValidOptionalNotas() &&

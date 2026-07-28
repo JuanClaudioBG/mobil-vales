@@ -10,6 +10,7 @@
   --danger: #ef5350;
   --empleado: #3d8bfd;
   --familia: #26a269;
+  --socio: #9b7bf0;
   --radius: 12px;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -263,6 +264,9 @@ td.notas {
 }
 .badge--familia {
   background: var(--familia);
+}
+.badge--socio {
+  background: var(--socio);
 }
 
 .btn-eliminar {
@@ -899,6 +903,9 @@ tr.row-empleado td {
 tr.row-familia td {
   background: rgba(38, 162, 105, 0.09);
 }
+tr.row-socio td {
+  background: rgba(155, 123, 240, 0.1);
+}
 
 /* --- Dashboard ------------------------------------------------------ */
 .dash-controls label {
@@ -913,7 +920,7 @@ tr.row-familia td {
 }
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 0.9rem;
 }
 .stat-card {
