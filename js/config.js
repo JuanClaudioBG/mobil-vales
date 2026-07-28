@@ -47,6 +47,7 @@ export const DEPARTAMENTOS = [
   "Administración",
   "Operaciones",
   "Logística",
+  "Soporte",
 ];
 
 // Directorio fijo de personas. `categoria` se autocompleta a partir de aquí.
@@ -74,6 +75,10 @@ export const PERSONAS = [
   // Empleados — Logística
   { nombre: "Alex", categoria: "Empleado", depto: "Logística" },
   { nombre: "Juan Ramon", categoria: "Empleado", depto: "Logística" },
+  // Empleados — Soporte
+  { nombre: "Lucio", categoria: "Empleado", depto: "Soporte" },
+  { nombre: "Emmanuel", categoria: "Empleado", depto: "Soporte" },
+  { nombre: "Soporte (General)", categoria: "Empleado", depto: "Soporte" },
 ];
 
 // Color por persona (gráfica del dashboard y leaderboard).
