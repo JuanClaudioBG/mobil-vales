@@ -94,6 +94,7 @@ const qrCodeText = $("#qr-code");
 const qrDownload = $("#qr-download");
 const qrShare = $("#qr-share");
 const qrDone = $("#qr-done");
+const qrPrev = $("#qr-prev");
 const qrNext = $("#qr-next");
 
 // Autocompletado (sólo "Registrado por")
@@ -709,6 +710,8 @@ function renderQrVale() {
     }
   };
 
+  // "← Anterior" oculto en el primer vale; sin sentido si sólo hay uno.
+  qrPrev.hidden = qrIndex === 0;
   // Último vale del lote → "Cerrar"; si quedan más → "Siguiente →".
   qrNext.textContent = qrIndex === total - 1 ? "Cerrar" : "Siguiente →";
 }
@@ -795,6 +798,12 @@ qrNext.addEventListener("click", () => {
     renderQrVale();
   } else {
     closeQrModal();
+  }
+});
+qrPrev.addEventListener("click", () => {
+  if (qrIndex > 0) {
+    qrIndex--;
+    renderQrVale(); // regenera QR y datos del vale anterior
   }
 });
 // Cerrar al tocar fuera de la tarjeta.

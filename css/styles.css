@@ -706,9 +706,14 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .qr-done.show {
   opacity: 1;
 }
+/* Navegación (Anterior / Siguiente-Cerrar): siempre lado a lado, incl. móvil. */
 .qr-actions {
   justify-content: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+.qr-actions button {
+  flex: 1;
+  max-width: 200px;
 }
 #qr-next {
   background: #e31e24;
