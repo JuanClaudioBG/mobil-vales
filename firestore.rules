@@ -34,6 +34,8 @@ rules_version = '2';
 //    - anulado:        bool      (opcional; borrado suave)
 //    - anuladoEn:      timestamp (opcional; cuándo se anuló)
 //    - batchId:        string    (opcional, <=64; id del lote para dedupe)
+//    - qrCode:         string    (opcional, <=64; código QR de prueba del vale,
+//                                 formato SPECTRO-FUEL-{AÑO}-{8 CHARS})
 //    - fecha:          timestamp (LEGACY; documentos antiguos usaban este campo
 //                                 en vez de 'fechaVale'. Se permite para poder
 //                                 actualizarlos/anularlos.)
@@ -49,7 +51,7 @@ service cloud.firestore {
     function hasOnlyAllowedFields() {
       return request.resource.data.keys().hasOnly(
         ['nombre', 'categoria', 'monto', 'fechaVale', 'fecha', 'createdAt',
-         'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId']
+         'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId', 'qrCode']
       );
     }
 
@@ -78,6 +80,12 @@ service cloud.firestore {
               request.resource.data.batchId.size() <= 64);
     }
 
+    function isValidOptionalQrCode() {
+      return !('qrCode' in request.resource.data) ||
+             (request.resource.data.qrCode is string &&
+              request.resource.data.qrCode.size() <= 64);
+    }
+
     // Campos comunes a create y update.
     function hasValidCommonFields() {
       return request.resource.data.keys().hasAll(
@@ -88,7 +96,8 @@ service cloud.firestore {
              isValidString('registradoPor', 1, 100) &&
              isValidOptionalNotas() &&
              isValidOptionalAnulado() &&
-             isValidOptionalBatchId();
+             isValidOptionalBatchId() &&
+             isValidOptionalQrCode();
     }
 
     // CREATE: esquema NUEVO estricto (siempre fechaVale + createdAt).

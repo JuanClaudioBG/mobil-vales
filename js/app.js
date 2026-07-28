@@ -82,6 +82,18 @@ const adminPinError = $("#admin-pin-error");
 const adminPinOk = $("#admin-pin-ok");
 const adminPinCancel = $("#admin-pin-cancel");
 
+// Modal de QR del vale
+const qrModal = $("#qr-modal");
+const qrProgress = $("#qr-progress");
+const qrNombre = $("#qr-nombre");
+const qrCategoria = $("#qr-categoria");
+const qrMonto = $("#qr-monto");
+const qrFecha = $("#qr-fecha");
+const qrCanvas = $("#qr-canvas");
+const qrCodeText = $("#qr-code");
+const qrWhatsapp = $("#qr-whatsapp");
+const qrNext = $("#qr-next");
+
 // Autocompletado (sólo "Registrado por")
 const registradoPorInput = $("#registradoPor");
 const registradoPorSug = $("#registradoPor-sugerencias");
@@ -519,10 +531,15 @@ async function doSave() {
   btnCancelar.disabled = true;
   btnConfirmar.innerHTML = '<span class="spinner"></span> Guardando…';
 
+  // Vales guardados en este lote, para mostrar sus QR tras el registro.
+  const savedVales = [];
+
   try {
+    const anio = parseDateInput(base.fechaValeStr).getFullYear();
     const batch = writeBatch(db);
     for (const monto of items) {
       const ref = doc(valesRef); // ID automático
+      const qrCode = makeQrCode(anio); // código único por vale
       const docData = {
         nombre: base.nombre,
         categoria: base.categoria,
@@ -532,9 +549,17 @@ async function doSave() {
         createdAt: serverTimestamp(),
         anulado: false,
         batchId,
+        qrCode,
       };
       if (base.notas) docData.notas = base.notas; // opcional
       batch.set(ref, docData);
+      savedVales.push({
+        nombre: base.nombre,
+        categoria: base.categoria,
+        monto,
+        fechaStr: base.fechaValeStr,
+        qrCode,
+      });
     }
     await batch.commit();
 
@@ -551,6 +576,8 @@ async function doSave() {
     personaSelect.focus();
     showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
     await loadVales();
+    // Tras el toast de éxito, muestra el QR de cada vale del lote.
+    openQrModal(savedVales);
   } catch (err) {
     console.error("Error al guardar:", err);
     formError.textContent = "No se pudieron guardar los vales: " + err.message;
@@ -576,6 +603,106 @@ function showToast(msg) {
     setTimeout(() => (toastEl.hidden = true), 300);
   }, 3000);
 }
+
+// ===========================================================================
+//  QR del vale (prototipo) — código de prueba SPECTRO-FUEL-{AÑO}-{8 CHARS}
+// ===========================================================================
+// Genera un código de prueba único: SPECTRO-FUEL-2026-A3K9XM2P
+function makeQrCode(anio) {
+  const year = Number.isFinite(anio) ? anio : new Date().getFullYear();
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let rand = "";
+  for (let i = 0; i < 8; i++) {
+    rand += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `SPECTRO-FUEL-${year}-${rand}`;
+}
+
+// Cola de vales por mostrar en el modal de QR y el índice actual.
+let qrQueue = [];
+let qrIndex = 0;
+
+function openQrModal(vales) {
+  if (!Array.isArray(vales) || vales.length === 0) return;
+  qrQueue = vales;
+  qrIndex = 0;
+  qrModal.hidden = false;
+  renderQrVale();
+}
+
+function renderQrVale() {
+  const v = qrQueue[qrIndex];
+  if (!v) return;
+  const total = qrQueue.length;
+
+  qrProgress.hidden = total <= 1;
+  qrProgress.textContent = `Vale ${qrIndex + 1} de ${total}`;
+
+  qrNombre.textContent = v.nombre;
+  qrCategoria.textContent = v.categoria;
+  qrMonto.textContent = money(v.monto);
+  const fechaTxt = parseDateInput(v.fechaStr).toLocaleDateString("es-MX", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+  qrFecha.textContent = fechaTxt;
+  qrCodeText.textContent = v.qrCode;
+
+  // Dibuja el QR (200x200). La librería añade <canvas>/<img> al contenedor.
+  qrCanvas.innerHTML = "";
+  if (window.QRCode) {
+    new window.QRCode(qrCanvas, {
+      text: v.qrCode,
+      width: 200,
+      height: 200,
+      colorDark: "#000000",
+      colorLight: "#ffffff",
+      correctLevel: window.QRCode.CorrectLevel.M,
+    });
+  } else {
+    // Respaldo si la CDN no cargó: al menos mostramos el código en texto.
+    qrCanvas.textContent = v.qrCode;
+  }
+
+  // WhatsApp: comparte los datos del vale.
+  qrWhatsapp.onclick = () => {
+    const msg =
+      `Tu vale de gasolina Spectro:\n\n` +
+      `Nombre: ${v.nombre}\n` +
+      `Monto: $${v.monto}\n` +
+      `Fecha: ${fechaTxt}\n` +
+      `Código: ${v.qrCode}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  // Último vale del lote → "Cerrar"; si quedan más → "Siguiente →".
+  qrNext.textContent = qrIndex === total - 1 ? "Cerrar" : "Siguiente →";
+}
+
+function closeQrModal() {
+  qrModal.hidden = true;
+  qrCanvas.innerHTML = "";
+  qrQueue = [];
+  qrIndex = 0;
+}
+
+qrNext.addEventListener("click", () => {
+  if (qrIndex < qrQueue.length - 1) {
+    qrIndex++;
+    renderQrVale();
+  } else {
+    closeQrModal();
+  }
+});
+// Cerrar al tocar fuera de la tarjeta.
+qrModal.addEventListener("click", (e) => {
+  if (e.target === qrModal) closeQrModal();
+});
+// Cerrar con Escape.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !qrModal.hidden) closeQrModal();
+});
 
 // UUID v4 (con respaldo si crypto.randomUUID no existe).
 function uuid() {

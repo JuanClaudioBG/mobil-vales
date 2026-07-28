@@ -245,6 +245,25 @@
         </div>
       </div>
 
+      <!-- Modal de QR del vale (se muestra tras registrar) ------------->
+      <div id="qr-modal" class="modal qr-modal" hidden>
+        <div class="modal-card qr-card">
+          <span id="qr-progress" class="qr-progress" hidden></span>
+          <h2 class="qr-title">⛽ Vale de Gasolina</h2>
+          <p class="qr-persona"><span id="qr-nombre"></span> · <span id="qr-categoria"></span></p>
+          <p class="qr-meta"><strong id="qr-monto"></strong> · <span id="qr-fecha"></span></p>
+          <div class="qr-canvas-wrap">
+            <div id="qr-canvas"></div>
+          </div>
+          <p id="qr-code" class="qr-code"></p>
+          <p class="qr-hint">Muestra este código en la gasolinera</p>
+          <div class="modal-actions qr-actions">
+            <button type="button" id="qr-whatsapp" class="btn-secondary">📱 WhatsApp</button>
+            <button type="button" id="qr-next">Siguiente →</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Modal de PIN de administrador (acciones sensibles) ----------->
       <div id="admin-pin-modal" class="modal" hidden>
         <div class="modal-card modal-card--sm">
@@ -267,6 +286,8 @@
       </div>
     </main>
 
+    <!-- qrcode.js (global window.QRCode); script clásico → se ejecuta antes que el módulo -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script type="module" src="./js/app.js"></script>
   </body>
 </html>

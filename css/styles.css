@@ -614,6 +614,88 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   gap: 0.4rem;
 }
 
+/* --- Modal de QR del vale (acento rojo Spectro) -------------------- */
+.qr-modal {
+  z-index: 200; /* por encima de cualquier otro modal/toast */
+}
+.qr-card {
+  width: min(360px, 100%);
+  text-align: center;
+  border-color: #e31e24;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.qr-progress {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #e31e24;
+  border: 1px solid #e31e24;
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  margin-bottom: 0.7rem;
+}
+.qr-title {
+  margin: 0 0 0.8rem;
+  font-size: 1.3rem;
+}
+.qr-persona {
+  margin: 0 0 0.2rem;
+  font-weight: 600;
+}
+.qr-meta {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+.qr-meta strong {
+  color: var(--text);
+}
+.qr-canvas-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 0.9rem;
+}
+#qr-canvas {
+  background: #fff; /* fondo blanco: imprescindible para que el QR sea legible */
+  padding: 12px;
+  border-radius: 10px;
+  width: 224px;
+  height: 224px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+}
+#qr-canvas img,
+#qr-canvas canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.qr-code {
+  margin: 0 0 0.4rem;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  word-break: break-all;
+}
+.qr-hint {
+  margin: 0 0 1.2rem;
+  font-size: 0.9rem;
+}
+.qr-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+#qr-next {
+  background: #e31e24;
+  color: #fff;
+}
+#qr-whatsapp {
+  border-color: #25d366;
+  color: #25d366;
+}
+
 /* --- Spinner -------------------------------------------------------- */
 .spinner {
   width: 14px;
