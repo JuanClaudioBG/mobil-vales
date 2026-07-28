@@ -91,7 +91,9 @@ const qrMonto = $("#qr-monto");
 const qrFecha = $("#qr-fecha");
 const qrCanvas = $("#qr-canvas");
 const qrCodeText = $("#qr-code");
-const qrWhatsapp = $("#qr-whatsapp");
+const qrDownload = $("#qr-download");
+const qrShare = $("#qr-share");
+const qrDone = $("#qr-done");
 const qrNext = $("#qr-next");
 
 // Autocompletado (sólo "Registrado por")
@@ -649,13 +651,17 @@ function renderQrVale() {
   qrFecha.textContent = fechaTxt;
   qrCodeText.textContent = v.qrCode;
 
-  // Dibuja el QR (200x200). La librería añade <canvas>/<img> al contenedor.
+  // Oculta la confirmación "✅ Listo" al cambiar de vale.
+  hideQrDone();
+
+  // Dibuja el QR a 1024px internos (PNG de alta calidad); el CSS lo muestra
+  // a min(80vw, 280px). La librería añade <canvas>/<img> al contenedor.
   qrCanvas.innerHTML = "";
   if (window.QRCode) {
     new window.QRCode(qrCanvas, {
       text: v.qrCode,
-      width: 200,
-      height: 200,
+      width: 1024,
+      height: 1024,
       colorDark: "#000000",
       colorLight: "#ffffff",
       correctLevel: window.QRCode.CorrectLevel.M,
@@ -665,19 +671,115 @@ function renderQrVale() {
     qrCanvas.textContent = v.qrCode;
   }
 
-  // WhatsApp: comparte los datos del vale.
-  qrWhatsapp.onclick = () => {
-    const msg =
-      `Tu vale de gasolina Spectro:\n\n` +
-      `Nombre: ${v.nombre}\n` +
-      `Monto: $${v.monto}\n` +
-      `Fecha: ${fechaTxt}\n` +
-      `Código: ${v.qrCode}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  // Descargar: exporta el QR como PNG (fondo blanco, sin transparencia).
+  qrDownload.onclick = () => {
+    const blob = qrToPngBlob();
+    if (!blob) return;
+    downloadBlob(blob, qrFileName(v));
+    showQrDone();
+  };
+
+  // Compartir: Web Share API con el archivo PNG; si no está disponible, descarga.
+  qrShare.onclick = async () => {
+    const blob = qrToPngBlob();
+    if (!blob) return;
+    const fileName = qrFileName(v);
+    const file = new File([blob], fileName, { type: "image/png" });
+    const shareData = {
+      files: [file],
+      title: `Vale de Gasolina ${money(v.monto)}`,
+      text:
+        `Tu vale de gasolina Spectro Networks\n` +
+        `Asignado a: ${v.nombre}\n` +
+        `Monto: ${money(v.monto)}\n` +
+        `Fecha: ${fechaTxt}\n` +
+        `Código: ${v.qrCode}`,
+    };
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share(shareData);
+        showQrDone();
+      } catch (err) {
+        // El usuario canceló el diálogo (AbortError) o falló: no hacemos nada.
+      }
+    } else {
+      // Sin Web Share API para archivos: respaldo → descargar.
+      downloadBlob(blob, fileName);
+      showQrDone();
+    }
   };
 
   // Último vale del lote → "Cerrar"; si quedan más → "Siguiente →".
   qrNext.textContent = qrIndex === total - 1 ? "Cerrar" : "Siguiente →";
+}
+
+// Devuelve el <canvas> que dibujó qrcode.js (contiene los píxeles del QR).
+function getQrCanvas() {
+  return qrCanvas.querySelector("canvas");
+}
+
+// Compone el QR sobre fondo blanco (sin transparencia) y lo devuelve como
+// Blob PNG. Es SÍNCRONO a propósito: así navigator.share() sigue dentro del
+// gesto del usuario (algunos navegadores lo exigen).
+function qrToPngBlob() {
+  const src = getQrCanvas();
+  if (!src) return null;
+  const out = document.createElement("canvas");
+  out.width = src.width;
+  out.height = src.height;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(src, 0, 0);
+  return dataUrlToBlob(out.toDataURL("image/png"));
+}
+
+function dataUrlToBlob(dataUrl) {
+  const [head, b64] = dataUrl.split(",");
+  const mime = (head.match(/:(.*?);/) || [])[1] || "image/png";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// Nombre de archivo: vale-{monto}-{nombre-normalizado}-{qrCode}.png
+function qrFileName(v) {
+  return `vale-${v.monto}-${normalizeNombre(v.nombre)}-${v.qrCode}.png`;
+}
+
+// Normaliza el nombre: minúsculas, sin acentos, espacios → guiones.
+function normalizeNombre(nombre) {
+  return String(nombre)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // quita acentos
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Confirmación "✅ Listo" durante 2 s (no cierra el modal).
+let qrDoneTimer = null;
+function showQrDone() {
+  qrDone.classList.add("show");
+  clearTimeout(qrDoneTimer);
+  qrDoneTimer = setTimeout(hideQrDone, 2000);
+}
+function hideQrDone() {
+  clearTimeout(qrDoneTimer);
+  qrDone.classList.remove("show");
 }
 
 function closeQrModal() {

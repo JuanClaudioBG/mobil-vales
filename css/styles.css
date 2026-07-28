@@ -658,18 +658,18 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   background: #fff; /* fondo blanco: imprescindible para que el QR sea legible */
   padding: 12px;
   border-radius: 10px;
-  width: 224px;
-  height: 224px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: #000;
 }
+/* El QR se dibuja a 1024px internos y se MUESTRA a min(80vw, 280px). */
 #qr-canvas img,
 #qr-canvas canvas {
   display: block;
-  max-width: 100%;
+  width: min(80vw, 280px);
   height: auto;
+  image-rendering: pixelated; /* bordes nítidos al reducir el QR */
 }
 .qr-code {
   margin: 0 0 0.4rem;
@@ -683,6 +683,29 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   margin: 0 0 1.2rem;
   font-size: 0.9rem;
 }
+/* Descargar / Compartir: lado a lado en escritorio, apilados en móvil. */
+.qr-share-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  margin-bottom: 0.6rem;
+}
+.qr-share-actions button {
+  flex: 1;
+  max-width: 200px;
+}
+.qr-done {
+  margin: 0 0 0.8rem;
+  min-height: 1.2em; /* reserva espacio: evita saltos al mostrar/ocultar */
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #22c98e; /* verde confirmación */
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.qr-done.show {
+  opacity: 1;
+}
 .qr-actions {
   justify-content: center;
   flex-wrap: wrap;
@@ -691,9 +714,15 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   background: #e31e24;
   color: #fff;
 }
-#qr-whatsapp {
-  border-color: #25d366;
-  color: #25d366;
+
+@media (max-width: 768px) {
+  .qr-share-actions {
+    flex-direction: column;
+  }
+  .qr-share-actions button {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 /* --- Spinner -------------------------------------------------------- */
