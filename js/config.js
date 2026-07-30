@@ -35,9 +35,20 @@ export const ADMIN_PIN = "7001";
 // Nombre de la colección en Firestore.
 export const COLLECTION = "vales";
 
+// Colección del inventario de vales físicos de Combusa (uno por folio).
+export const INVENTARIO_COLLECTION = "inventario";
+
 // Opciones permitidas (deben coincidir con firestore.rules).
 export const CATEGORIAS = ["Empleado", "Familia", "Socio"];
 export const MONTOS = [200, 300, 500, 1000, 4000];
+
+// Denominaciones que surte Combusa en el PDF de vales físicos. Sólo estas se
+// toman del inventario; el resto (p. ej. $4,000) sigue con el QR generado por
+// la app.
+export const INVENTARIO_MONTOS = [200, 300, 500, 1000];
+
+// Estados posibles de un vale del inventario (deben coincidir con las reglas).
+export const INVENTARIO_STATUS = ["disponible", "asignado", "canjeado", "vencido"];
 
 // Orden de los departamentos en el selector de persona.
 export const DEPARTAMENTOS = [

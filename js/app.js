@@ -25,6 +25,19 @@ import {
   PERSONA_COLORS,
   COLOR_DEFAULT,
 } from "./config.js";
+import { money, escapeHtml, todayInput } from "./utils.js";
+import {
+  initInventario,
+  ensurePool,
+  renderInventarioAdmin,
+  montoRequiereInventario,
+  disponiblesPorMonto,
+  tomarFolios,
+  inventarioDocRef,
+  camposAsignacion,
+  marcarAsignadosLocal,
+  formatFolio,
+} from "./inventario.js";
 
 // --- Inicialización de Firebase --------------------------------------------
 const app = initializeApp(firebaseConfig);
@@ -91,6 +104,7 @@ const qrMonto = $("#qr-monto");
 const qrFecha = $("#qr-fecha");
 const qrCanvas = $("#qr-canvas");
 const qrCodeText = $("#qr-code");
+const qrVence = $("#qr-vence");
 const qrDownload = $("#qr-download");
 const qrShare = $("#qr-share");
 const qrDone = $("#qr-done");
@@ -163,11 +177,27 @@ function clearAppError() {
 }
 
 // --- Puerta de PIN (sólo cosmética, ver advertencia en config.js) ----------
+let inventarioIniciado = false;
+
 function unlock() {
   pinScreen.hidden = true;
   appScreen.hidden = false;
   sessionStorage.setItem("vales_unlocked", "1");
   loadVales(); // carga inicial (una sola vez); loadVales gestiona sus errores
+
+  // El inventario se conecta al entrar (no antes: así no se descarga nada
+  // desde la pantalla del PIN). El pool de folios disponibles se carga en
+  // segundo plano y no bloquea la interfaz.
+  if (!inventarioIniciado) {
+    inventarioIniciado = true;
+    initInventario({
+      db,
+      requestAdminPin,
+      showToast,
+      // Quién importa el PDF: el mismo nombre que usa "Registrado por".
+      getUsuario: () => registradoPorInput.value.trim() || "Admin",
+    });
+  }
 }
 
 pinForm.addEventListener("submit", (e) => {
@@ -427,7 +457,7 @@ function withTimeout(promise, ms) {
 if (refreshBtn) refreshBtn.addEventListener("click", loadVales);
 
 // --- Enviar: validar → mostrar confirmación --------------------------------
-valeForm.addEventListener("submit", (e) => {
+valeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   formError.hidden = true;
 
@@ -462,9 +492,46 @@ valeForm.addEventListener("submit", (e) => {
     return;
   }
 
+  // Cada vale tiene que respaldarse con un folio real del inventario de
+  // Combusa. Se comprueba ANTES de confirmar para no dejar el registro a medias.
+  const faltaInventario = await revisarInventario(items);
+  if (faltaInventario) {
+    formError.textContent = faltaInventario;
+    formError.hidden = false;
+    return;
+  }
+
   pendingSave = { base, items };
   openConfirm(base, items);
 });
+
+// Devuelve un mensaje de aviso si no hay folios suficientes, o null si todo bien.
+async function revisarInventario(items) {
+  // ensurePool() nunca falla: si el inventario no se puede leer, queda vacío y
+  // montoRequiereInventario() devuelve false, así que el registro sigue como
+  // antes (QR generado) en lugar de bloquearse.
+  await ensurePool();
+
+  // Cuántos se piden de cada denominación que sale del inventario.
+  const pedidos = new Map();
+  for (const monto of items) {
+    if (!montoRequiereInventario(monto)) continue;
+    pedidos.set(monto, (pedidos.get(monto) || 0) + 1);
+  }
+
+  const avisos = [];
+  for (const [monto, cantidad] of [...pedidos].sort((a, b) => a[0] - b[0])) {
+    const libres = disponiblesPorMonto(monto).length;
+    if (libres >= cantidad) continue;
+    avisos.push(
+      libres === 0
+        ? `⚠️ Sin inventario de ${money(monto)} disponible`
+        : `⚠️ Sólo quedan ${libres} vales de ${money(monto)} en inventario (pediste ${cantidad})`
+    );
+  }
+  if (avisos.length === 0) return null;
+  return avisos.join(". ") + ". Importa el PDF de Combusa en la pestaña Admin.";
+}
 
 function validarBase(d) {
   if (!d.nombre || !CATEGORIAS.includes(d.categoria)) return "Selecciona una persona del directorio.";
@@ -538,12 +605,37 @@ async function doSave() {
   // Vales guardados en este lote, para mostrar sus QR tras el registro.
   const savedVales = [];
 
+  // Folios reales del inventario, uno por vale (null si esa denominación no
+  // sale del inventario).
+  const { picks, faltantes } = tomarFolios(items);
+  if (Object.keys(faltantes).length > 0) {
+    // El inventario cambió entre la confirmación y el guardado (otro registro
+    // se llevó los folios). Mejor abortar que guardar vales sin respaldo.
+    const detalle = Object.keys(faltantes)
+      .sort((a, b) => a - b)
+      .map((m) => money(m))
+      .join(", ");
+    saving = false;
+    btnConfirmar.disabled = false;
+    btnCancelar.disabled = false;
+    btnConfirmar.textContent = "Confirmar";
+    closeConfirm();
+    formError.textContent = `⚠️ Sin inventario de ${detalle} disponible. Actualiza el inventario e inténtalo de nuevo.`;
+    formError.hidden = false;
+    return;
+  }
+  const foliosAsignados = [];
+
   try {
     const anio = parseDateInput(base.fechaValeStr).getFullYear();
     const batch = writeBatch(db);
-    for (const monto of items) {
+    items.forEach((monto, i) => {
       const ref = doc(valesRef); // ID automático
-      const qrCode = makeQrCode(anio); // código único por vale
+      const pick = picks[i];
+      // Con folio del inventario el "código" del vale ES el folio de Combusa;
+      // si no hay inventario para esa denominación se mantiene el código
+      // generado por la app.
+      const qrCode = pick ? `COMBUSA-${pick.folio}` : makeQrCode(anio);
       const docData = {
         nombre: base.nombre,
         categoria: base.categoria,
@@ -556,6 +648,14 @@ async function doSave() {
         qrCode,
       };
       if (base.notas) docData.notas = base.notas; // opcional
+      if (pick) {
+        docData.folio = pick.folio;
+        if (pick.vencimiento) docData.vencimiento = pick.vencimiento;
+        // El vale del inventario pasa a "asignado" en el MISMO lote: o se
+        // guarda todo, o no se guarda nada.
+        batch.update(inventarioDocRef(pick.folio), camposAsignacion(base.nombre, batchId));
+        foliosAsignados.push(pick.folio);
+      }
       batch.set(ref, docData);
       savedVales.push({
         nombre: base.nombre,
@@ -563,9 +663,13 @@ async function doSave() {
         monto,
         fechaStr: base.fechaValeStr,
         qrCode,
+        folio: pick ? pick.folio : null,
+        vencimiento: pick ? pick.vencimiento : null,
+        qrImageBase64: pick ? pick.qrImageBase64 : null,
       });
-    }
+    });
     await batch.commit();
+    if (foliosAsignados.length) marcarAsignadosLocal(foliosAsignados);
 
     const n = items.length;
     const total = sum(items);
@@ -634,10 +738,15 @@ function openQrModal(vales) {
   renderQrVale();
 }
 
-function renderQrVale() {
+// Token de render: evita que un dibujado asíncrono que llega tarde pise el
+// vale que se está mostrando (p. ej. si se pulsa "Siguiente" muy rápido).
+let qrRenderToken = 0;
+
+async function renderQrVale() {
   const v = qrQueue[qrIndex];
   if (!v) return;
   const total = qrQueue.length;
+  const token = ++qrRenderToken;
 
   qrProgress.hidden = total <= 1;
   qrProgress.textContent = `Vale ${qrIndex + 1} de ${total}`;
@@ -651,27 +760,24 @@ function renderQrVale() {
     year: "numeric",
   });
   qrFecha.textContent = fechaTxt;
-  qrCodeText.textContent = v.qrCode;
+  // Con folio real se muestra el folio de Combusa; si no, el código generado.
+  qrCodeText.textContent = v.folio ? `Folio: ${formatFolio(v.folio)}` : v.qrCode;
+  qrVence.hidden = !v.vencimiento;
+  if (v.vencimiento) {
+    qrVence.textContent =
+      "Vence: " +
+      parseDateInput(v.vencimiento).toLocaleDateString("es-MX", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      });
+  }
 
   // Oculta la confirmación "✅ Listo" al cambiar de vale.
   hideQrDone();
 
-  // Dibuja el QR a 1024px internos (PNG de alta calidad); el CSS lo muestra
-  // a min(80vw, 280px). La librería añade <canvas>/<img> al contenedor.
-  qrCanvas.innerHTML = "";
-  if (window.QRCode) {
-    new window.QRCode(qrCanvas, {
-      text: v.qrCode,
-      width: 1024,
-      height: 1024,
-      colorDark: "#000000",
-      colorLight: "#ffffff",
-      correctLevel: window.QRCode.CorrectLevel.M,
-    });
-  } else {
-    // Respaldo si la CDN no cargó: al menos mostramos el código en texto.
-    qrCanvas.textContent = v.qrCode;
-  }
+  // Identificador que se muestra al compartir: el folio real si lo hay.
+  const idTxt = v.folio ? `Folio: ${formatFolio(v.folio)}` : `Código: ${v.qrCode}`;
 
   // Descargar: exporta el QR como PNG (fondo blanco, sin transparencia).
   qrDownload.onclick = () => {
@@ -695,7 +801,8 @@ function renderQrVale() {
         `Asignado a: ${v.nombre}\n` +
         `Monto: ${money(v.monto)}\n` +
         `Fecha: ${fechaTxt}\n` +
-        `Código: ${v.qrCode}`,
+        idTxt +
+        (v.vencimiento ? `\nVence: ${v.vencimiento}` : ""),
     };
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
@@ -715,9 +822,63 @@ function renderQrVale() {
   qrPrev.hidden = qrIndex === 0;
   // Último vale del lote → "Cerrar"; si quedan más → "Siguiente →".
   qrNext.textContent = qrIndex === total - 1 ? "Cerrar" : "Siguiente →";
+
+  // El QR se pinta al final: así los botones ya responden al vale correcto
+  // mientras se decodifica la imagen.
+  qrCanvas.innerHTML = "";
+  if (v.qrImageBase64) {
+    // Vale REAL de Combusa: se pinta la imagen del QR que venía en el PDF.
+    // Se dibuja en un <canvas> (no en un <img>) para que "Descargar" y
+    // "Compartir" sigan funcionando de forma síncrona, igual que antes.
+    await drawQrImage(v.qrImageBase64, token);
+  } else if (window.QRCode) {
+    // Sin inventario para esta denominación: QR generado por la app, a 1024px
+    // internos (PNG de alta calidad); el CSS lo muestra a min(80vw, 280px).
+    new window.QRCode(qrCanvas, {
+      text: v.qrCode,
+      width: 1024,
+      height: 1024,
+      colorDark: "#000000",
+      colorLight: "#ffffff",
+      correctLevel: window.QRCode.CorrectLevel.M,
+    });
+  } else {
+    // Respaldo si la CDN no cargó: al menos mostramos el código en texto.
+    qrCanvas.textContent = v.qrCode;
+  }
 }
 
-// Devuelve el <canvas> que dibujó qrcode.js (contiene los píxeles del QR).
+// Pinta la imagen real del QR (base64 del PDF de Combusa) en un <canvas>, para
+// que el resto del modal (descargar/compartir) funcione sin cambios.
+async function drawQrImage(base64, token) {
+  const img = new Image();
+  img.src = "data:image/png;base64," + base64;
+  try {
+    // decode() espera a que la imagen esté lista para pintarse.
+    if (img.decode) await img.decode();
+    else await new Promise((ok, fail) => ((img.onload = ok), (img.onerror = fail)));
+  } catch (err) {
+    console.error("[vales] QR del inventario ilegible:", err);
+    qrCanvas.textContent = "No se pudo mostrar el QR de este vale.";
+    return;
+  }
+  if (token !== qrRenderToken) return; // ya se está mostrando otro vale
+
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth || 480;
+  canvas.height = img.naturalHeight || 480;
+  // El QR real se muestra reducido: con suavizado se conserva la rejilla de
+  // módulos mejor que con 'pixelated'.
+  canvas.className = "qr-real";
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  qrCanvas.innerHTML = "";
+  qrCanvas.appendChild(canvas);
+}
+
+// Devuelve el <canvas> que contiene los píxeles del QR (generado o real).
 function getQrCanvas() {
   return qrCanvas.querySelector("canvas");
 }
@@ -747,9 +908,10 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([arr], { type: mime });
 }
 
-// Nombre de archivo: vale-{monto}-{nombre-normalizado}-{qrCode}.png
+// Nombre de archivo: vale-{monto}-{nombre-normalizado}-{folio|qrCode}.png
 function qrFileName(v) {
-  return `vale-${v.monto}-${normalizeNombre(v.nombre)}-${v.qrCode}.png`;
+  const id = v.folio ? `folio-${v.folio}` : v.qrCode;
+  return `vale-${v.monto}-${normalizeNombre(v.nombre)}-${id}.png`;
 }
 
 // Normaliza el nombre: minúsculas, sin acentos, espacios → guiones.
@@ -894,7 +1056,12 @@ tabButtons.forEach((btn) => {
     for (const [name, el] of Object.entries(views)) el.hidden = name !== target;
     // Re-render por si cambiaron datos.
     if (target === "dashboard") renderDashboard();
-    if (target === "admin") renderAdmin();
+    if (target === "admin") {
+      renderAdmin();
+      // El inventario completo (con el base64 de cada QR) se descarga sólo al
+      // abrir esta pestaña, no al entrar a la app.
+      renderInventarioAdmin();
+    }
   });
 });
 
@@ -1301,18 +1468,6 @@ function formatFechaVale(v) {
   return `${f}${reg ? "<br>" + reg : ""}`;
 }
 
-// "YYYY-MM-DD" de hoy (para el input date).
-function todayInput() {
-  const d = new Date();
-  return (
-    d.getFullYear() +
-    "-" +
-    String(d.getMonth() + 1).padStart(2, "0") +
-    "-" +
-    String(d.getDate()).padStart(2, "0")
-  );
-}
-
 // Convierte "YYYY-MM-DD" a Date en medianoche local.
 function parseDateInput(str) {
   const [y, m, d] = str.split("-").map(Number);
@@ -1347,9 +1502,6 @@ function lastNMonths(endKey, n) {
 function sum(arr) {
   return arr.reduce((a, b) => a + (Number(b) || 0), 0);
 }
-function money(n) {
-  return "$" + Number(n || 0).toLocaleString("es-MX");
-}
 // Agrupa por clave -> {count, total}
 function groupSum(vales, keyFn) {
   const map = new Map();
@@ -1369,13 +1521,4 @@ function catSlug(categoria) {
   if (categoria === "Familia") return "familia";
   if (categoria === "Socio") return "socio";
   return "empleado";
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }

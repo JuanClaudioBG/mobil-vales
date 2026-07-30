@@ -225,6 +225,51 @@
           </div>
           <p id="admin-vales-empty" class="empty" hidden>Aún no hay vales.</p>
         </div>
+
+        <!-- Inventario de vales físicos de Combusa ------------------->
+        <div class="card">
+          <div class="admin-head">
+            <h2>Inventario de Vales Combusa</h2>
+            <div class="inv-head-actions">
+              <button type="button" id="btn-inv-actualizar" class="btn-secondary">↻ Actualizar</button>
+              <button type="button" id="btn-importar-pdf">📥 Importar PDF</button>
+            </div>
+          </div>
+          <input type="file" id="pdf-input" accept=".pdf,application/pdf" hidden />
+
+          <p id="inv-progress" class="inv-progress" hidden></p>
+          <p id="inv-resumen" class="inv-resumen" hidden></p>
+          <p id="inv-error" class="error" hidden></p>
+
+          <div id="inv-stock" class="stat-grid inv-stock"></div>
+          <div class="inv-totales">
+            <span>Total disponible: <strong id="inv-total">$0</strong></span>
+            <span id="inv-ultima" class="inv-ultima"></span>
+          </div>
+
+          <div class="filtros">
+            <label>Estado <select id="inv-filtro-status"></select></label>
+            <label>Monto <select id="inv-filtro-monto"></select></label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Folio</th>
+                  <th class="num">Monto</th>
+                  <th>Status</th>
+                  <th>Asignado a</th>
+                  <th>Fecha asignación</th>
+                </tr>
+              </thead>
+              <tbody id="inv-body"></tbody>
+            </table>
+          </div>
+          <p id="inv-empty" class="empty" hidden>Aún no hay vales importados. Usa «📥 Importar PDF».</p>
+          <div class="historial-total">
+            <span id="inv-count" class="inv-count"></span>
+          </div>
+        </div>
       </section>
 
       <!-- Toast de éxito ------------------------------------------------>
@@ -260,6 +305,7 @@
             <div id="qr-canvas"></div>
           </div>
           <p id="qr-code" class="qr-code"></p>
+          <p id="qr-vence" class="qr-vence" hidden></p>
           <p class="qr-hint">Muestra este código en la gasolinera</p>
           <div class="qr-share-actions">
             <button type="button" id="qr-download" class="btn-secondary">⬇️ Descargar</button>

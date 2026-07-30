@@ -34,11 +34,34 @@ rules_version = '2';
 //    - anulado:        bool      (opcional; borrado suave)
 //    - anuladoEn:      timestamp (opcional; cuándo se anuló)
 //    - batchId:        string    (opcional, <=64; id del lote para dedupe)
-//    - qrCode:         string    (opcional, <=64; código QR de prueba del vale,
-//                                 formato SPECTRO-FUEL-{AÑO}-{8 CHARS})
+//    - qrCode:         string    (opcional, <=64; código del vale: COMBUSA-{FOLIO}
+//                                 si sale del inventario, o el código de prueba
+//                                 SPECTRO-FUEL-{AÑO}-{8 CHARS} si no)
+//    - folio:          string    (opcional, <=16, sólo dígitos; folio real del
+//                                 vale físico de Combusa asignado a este vale)
+//    - vencimiento:    string    (opcional, "YYYY-MM-DD"; vencimiento del vale
+//                                 físico asignado)
 //    - fecha:          timestamp (LEGACY; documentos antiguos usaban este campo
 //                                 en vez de 'fechaVale'. Se permite para poder
 //                                 actualizarlos/anularlos.)
+//
+//  Colección: inventario
+//  ID de documento: EL FOLIO (p. ej. "117765"). Al usar el folio como ID,
+//                   Firestore impide por construcción importar dos veces el
+//                   mismo vale físico.
+//  Campos:
+//    - folio:          string   (requerido, 1..16, sólo dígitos; == ID del doc)
+//    - monto:          number   (requerido, en [200, 300, 500, 1000])
+//    - status:         string   (requerido, en ['disponible','asignado',
+//                                'canjeado','vencido'])
+//    - vencimiento:    string   (requerido pero puede ser null; "YYYY-MM-DD")
+//    - qrImageBase64:  string   (requerido, <=80000; PNG en base64 del QR real
+//                                extraído del PDF de Combusa. ~6KB por vale)
+//    - asignadoA:      string   (o null; persona a la que se asignó)
+//    - asignadoEn:     timestamp(o null; cuándo se asignó)
+//    - batchId:        string   (o null, <=64; lote de registro que lo asignó)
+//    - importadoEn:    timestamp(requerido; serverTimestamp() de la importación)
+//    - importadoPor:   string   (requerido, 1..100)
 //
 // ===============================================================
 
@@ -51,7 +74,8 @@ service cloud.firestore {
     function hasOnlyAllowedFields() {
       return request.resource.data.keys().hasOnly(
         ['nombre', 'categoria', 'monto', 'fechaVale', 'fecha', 'createdAt',
-         'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId', 'qrCode']
+         'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId', 'qrCode',
+         'folio', 'vencimiento']
       );
     }
 
@@ -86,6 +110,18 @@ service cloud.firestore {
               request.resource.data.qrCode.size() <= 64);
     }
 
+    // Folio del vale físico de Combusa asignado a este vale (si hubo inventario).
+    function isValidOptionalFolio() {
+      return (!('folio' in request.resource.data) ||
+              (request.resource.data.folio is string &&
+               request.resource.data.folio.size() >= 1 &&
+               request.resource.data.folio.size() <= 16 &&
+               request.resource.data.folio.matches('^[0-9]+$'))) &&
+             (!('vencimiento' in request.resource.data) ||
+              (request.resource.data.vencimiento is string &&
+               request.resource.data.vencimiento.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')));
+    }
+
     // Campos comunes a create y update.
     function hasValidCommonFields() {
       return request.resource.data.keys().hasAll(
@@ -97,7 +133,8 @@ service cloud.firestore {
              isValidOptionalNotas() &&
              isValidOptionalAnulado() &&
              isValidOptionalBatchId() &&
-             isValidOptionalQrCode();
+             isValidOptionalQrCode() &&
+             isValidOptionalFolio();
     }
 
     // CREATE: esquema NUEVO estricto (siempre fechaVale + createdAt).
@@ -131,6 +168,98 @@ service cloud.firestore {
       allow update: if isValidUpdatedVale();
 
       // Sin borrado físico: se usa borrado suave (anulado = true).
+      allow delete: if false;
+    }
+
+    // --------- Inventario de vales físicos de Combusa ---------
+    // Mismo modelo de seguridad que 'vales': acceso público, validado por FORMA.
+    // Lo que estas reglas SÍ garantizan:
+    //   · un folio no se puede reimportar ni reescribir (los datos del vale
+    //     físico son inmutables una vez importados);
+    //   · una actualización sólo puede tocar los campos de asignación, así que
+    //     nadie puede "reciclar" un folio cambiándole el monto o el QR.
+    match /inventario/{folio} {
+
+      function invHasOnlyAllowedFields() {
+        return request.resource.data.keys().hasOnly(
+          ['folio', 'monto', 'status', 'vencimiento', 'qrImageBase64',
+           'asignadoA', 'asignadoEn', 'batchId', 'importadoEn', 'importadoPor']
+        );
+      }
+
+      // Campos que pueden faltar o ser null (aún sin asignar).
+      function invNullableString(field, maxLen) {
+        return !(field in request.resource.data) ||
+               request.resource.data[field] == null ||
+               (request.resource.data[field] is string &&
+                request.resource.data[field].size() <= maxLen);
+      }
+
+      function invNullableTimestamp(field) {
+        return !(field in request.resource.data) ||
+               request.resource.data[field] == null ||
+               request.resource.data[field] is timestamp;
+      }
+
+      // "YYYY-MM-DD" o null (hay PDFs sin fecha de vencimiento legible).
+      function invValidVencimiento() {
+        return !('vencimiento' in request.resource.data) ||
+               request.resource.data.vencimiento == null ||
+               (request.resource.data.vencimiento is string &&
+                request.resource.data.vencimiento.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+      }
+
+      function invIsValidNew() {
+        return invHasOnlyAllowedFields() &&
+               request.resource.data.keys().hasAll(
+                 ['folio', 'monto', 'status', 'qrImageBase64',
+                  'importadoEn', 'importadoPor']) &&
+               // El ID del documento ES el folio: sin esto se podrían crear
+               // duplicados del mismo vale físico con IDs distintos.
+               request.resource.data.folio == folio &&
+               request.resource.data.folio is string &&
+               request.resource.data.folio.size() >= 1 &&
+               request.resource.data.folio.size() <= 16 &&
+               request.resource.data.folio.matches('^[0-9]+$') &&
+               (request.resource.data.monto in [200, 300, 500, 1000]) &&
+               (request.resource.data.status in
+                 ['disponible', 'asignado', 'canjeado', 'vencido']) &&
+               invValidVencimiento() &&
+               // Imagen del QR: ~6KB por vale; el tope evita payloads gigantes.
+               request.resource.data.qrImageBase64 is string &&
+               request.resource.data.qrImageBase64.size() >= 1 &&
+               request.resource.data.qrImageBase64.size() <= 80000 &&
+               invNullableString('asignadoA', 100) &&
+               invNullableTimestamp('asignadoEn') &&
+               invNullableString('batchId', 64) &&
+               request.resource.data.importadoEn is timestamp &&
+               request.resource.data.importadoPor is string &&
+               request.resource.data.importadoPor.size() >= 1 &&
+               request.resource.data.importadoPor.size() <= 100;
+      }
+
+      // UPDATE: sólo la asignación/estado. Folio, monto, vencimiento, QR e
+      // importación quedan congelados desde la creación.
+      function invIsValidUpdate() {
+        return request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+               (request.resource.data.status in
+                 ['disponible', 'asignado', 'canjeado', 'vencido']) &&
+               invNullableString('asignadoA', 100) &&
+               invNullableTimestamp('asignadoEn') &&
+               invNullableString('batchId', 64);
+      }
+
+      // Lectura pública: la app necesita el QR y las existencias.
+      allow read: if true;
+
+      // 'create' sólo aplica si el documento NO existe: reimportar el mismo
+      // folio es un 'update', que invIsValidUpdate() rechaza al cambiar campos
+      // congelados.
+      allow create: if invIsValidNew();
+      allow update: if invIsValidUpdate();
+
+      // Un vale físico importado no se borra: se marca 'canjeado' o 'vencido'.
       allow delete: if false;
     }
 

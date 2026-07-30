@@ -1339,3 +1339,116 @@ tr.row-socio td {
     font-weight: 600;
   }
 }
+
+/* ===================================================================== */
+/*  Inventario de vales físicos de Combusa (pestaña Admin)               */
+/* ===================================================================== */
+.inv-head-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Avance de la importación ("Analizando PDF…", "Importando… 45/105 vales") */
+.inv-progress {
+  margin: 0 0 0.8rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* Resumen final de la importación (puede traer varias líneas) */
+.inv-resumen {
+  margin: 0 0 0.8rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(38, 162, 105, 0.12);
+  border: 1px solid rgba(38, 162, 105, 0.35);
+  font-size: 0.9rem;
+  white-space: pre-line;
+}
+
+/* Tarjetas de existencias por denominación */
+.inv-stock {
+  margin-bottom: 0.8rem;
+}
+.inv-card {
+  gap: 0.15rem;
+}
+.inv-card strong {
+  color: var(--familia);
+}
+.inv-card-sub {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.inv-totales {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.inv-totales strong {
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+.inv-ultima {
+  font-size: 0.82rem;
+}
+.inv-count {
+  font-size: 0.9rem;
+}
+
+/* Folio en monoespaciada: se comparan muchos números seguidos */
+.inv-folio {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+/* Código de color por estado del vale */
+.badge--disponible {
+  background: var(--familia);
+}
+.badge--asignado {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.badge--canjeado {
+  background: #b04a4a;
+}
+.badge--vencido {
+  background: var(--danger);
+}
+tr.inv-row--disponible td {
+  background: rgba(38, 162, 105, 0.09);
+}
+tr.inv-row--asignado td {
+  background: rgba(245, 166, 35, 0.1);
+}
+tr.inv-row--canjeado td {
+  background: rgba(176, 74, 74, 0.12);
+}
+tr.inv-row--vencido td {
+  background: rgba(239, 83, 80, 0.12);
+}
+
+/* Vencimiento del vale real en el modal del QR */
+.qr-vence {
+  margin: 0 0 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* El QR real de Combusa se muestra reducido (480px → 280px): con suavizado la
+   rejilla de módulos se conserva mejor que con 'pixelated'. */
+#qr-canvas canvas.qr-real {
+  image-rendering: auto;
+}
