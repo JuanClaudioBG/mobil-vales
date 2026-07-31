@@ -240,6 +240,13 @@ service cloud.firestore {
 
       // UPDATE: sólo la asignación/estado. Folio, monto, vencimiento, QR e
       // importación quedan congelados desde la creación.
+      //
+      // Cubre los DOS sentidos del ciclo de vida:
+      //   · asignar:  status→'asignado',  asignadoA/asignadoEn/batchId con valor
+      //   · devolver: status→'disponible', esos tres campos a NULL (al anular el
+      //     vale que usaba el folio, el vale de papel no se gastó)
+      // Los tres campos son anulables a propósito: invNullableString /
+      // invNullableTimestamp aceptan null de forma explícita.
       function invIsValidUpdate() {
         return request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&

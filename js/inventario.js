@@ -14,6 +14,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   limit,
   query,
@@ -256,6 +257,37 @@ export function marcarAsignadosLocal(folios) {
   disponibles = disponibles.filter((v) => !set.has(String(v.folio)));
   todosCargados = false;
   refreshPool().catch((err) => console.error("[inventario] refresh:", err));
+}
+
+// Campos que DEVUELVEN un vale al inventario (al anular el vale que lo usaba).
+// Sólo toca las cuatro claves que las reglas permiten modificar; el folio, el
+// monto, el vencimiento y la imagen del QR siguen intactos.
+export function camposDevolucion() {
+  return {
+    status: "disponible",
+    asignadoA: null,
+    asignadoEn: null,
+    batchId: null,
+  };
+}
+
+// ¿Existe el documento de inventario de este folio? Los vales de pruebas
+// antiguas traen folios que ya no están en la colección: en ese caso se anula
+// el vale sin tocar el inventario.
+export async function existeFolio(folio) {
+  try {
+    const snap = await getDoc(inventarioDocRef(folio));
+    return snap.exists();
+  } catch (err) {
+    console.error("[inventario] no se pudo comprobar el folio", folio, err);
+    return false;
+  }
+}
+
+// Recarga el inventario tras devolver un folio (pool + tabla de la pestaña).
+export async function refrescarInventario() {
+  todosCargados = false;
+  await refreshPool();
 }
 
 // ===========================================================================

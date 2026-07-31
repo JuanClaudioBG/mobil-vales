@@ -6,7 +6,6 @@ import {
   getFirestore,
   collection,
   doc,
-  updateDoc,
   getDocs,
   serverTimestamp,
   writeBatch,
@@ -35,6 +34,9 @@ import {
   tomarFolios,
   inventarioDocRef,
   camposAsignacion,
+  camposDevolucion,
+  existeFolio,
+  refrescarInventario,
   marcarAsignadosLocal,
   formatFolio,
 } from "./inventario.js";
@@ -121,6 +123,7 @@ const views = {
   registro: $("#view-registro"),
   dashboard: $("#view-dashboard"),
   admin: $("#view-admin"),
+  inventario: $("#view-inventario"),
 };
 
 // Dashboard
@@ -760,8 +763,10 @@ async function renderQrVale() {
     year: "numeric",
   });
   qrFecha.textContent = fechaTxt;
-  // Con folio real se muestra el folio de Combusa; si no, el código generado.
+  // Con folio real se muestra el folio de Combusa (destacado: es EL dato que
+  // pide la gasolinera); si no, el código generado por la app, más discreto.
   qrCodeText.textContent = v.folio ? `Folio: ${formatFolio(v.folio)}` : v.qrCode;
+  qrCodeText.classList.toggle("qr-code--folio", !!v.folio);
   qrVence.hidden = !v.vencimiento;
   if (v.vencimiento) {
     qrVence.textContent =
@@ -1031,14 +1036,37 @@ adminPinInput.addEventListener("keydown", (e) => {
 });
 
 // --- Anular un vale (borrado suave) — requiere PIN de administrador ----------
-async function anularVale(id, nombre) {
-  const ok = await requestAdminPin(`Anular el vale de "${nombre}". Dejará de contar en reportes.`);
+// Si el vale usaba un folio real de Combusa, ese folio VUELVE al inventario
+// como "disponible": el vale de papel no se gastó, así que puede reasignarse.
+async function anularVale(vale) {
+  const { id, nombre, folio } = vale;
+
+  const ok = await requestAdminPin(
+    `Anular el vale de "${nombre}". Dejará de contar en reportes.` +
+      (folio ? ` El folio ${formatFolio(folio)} volverá al inventario.` : "")
+  );
   if (!ok) return;
+
   try {
-    await updateDoc(doc(db, COLLECTION, id), {
+    // ¿Sigue existiendo el vale de papel? Los folios de pruebas anteriores
+    // pueden haberse borrado; en ese caso se anula el vale y ya está.
+    const devolver = folio ? await existeFolio(folio) : false;
+
+    // Un solo lote: o se anula el vale Y se devuelve el folio, o no pasa nada.
+    const batch = writeBatch(db);
+    batch.update(doc(db, COLLECTION, id), {
       anulado: true,
       anuladoEn: serverTimestamp(),
     });
+    if (devolver) batch.update(inventarioDocRef(folio), camposDevolucion());
+    await batch.commit();
+
+    if (devolver) {
+      await refrescarInventario();
+      showToast(`✅ Vale anulado · folio ${formatFolio(folio)} devuelto al inventario`);
+    } else {
+      showToast("✅ Vale anulado");
+    }
     await loadVales();
   } catch (err) {
     console.error("Error al anular:", err);
@@ -1056,12 +1084,10 @@ tabButtons.forEach((btn) => {
     for (const [name, el] of Object.entries(views)) el.hidden = name !== target;
     // Re-render por si cambiaron datos.
     if (target === "dashboard") renderDashboard();
-    if (target === "admin") {
-      renderAdmin();
-      // El inventario completo (con el base64 de cada QR) se descarga sólo al
-      // abrir esta pestaña, no al entrar a la app.
-      renderInventarioAdmin();
-    }
+    if (target === "admin") renderAdmin();
+    // El inventario completo (con el base64 de cada QR) se descarga sólo al
+    // abrir su pestaña, no al entrar a la app.
+    if (target === "inventario") renderInventarioAdmin();
   });
 });
 
@@ -1163,7 +1189,7 @@ function renderHistorial() {
     btn.className = "btn-anular";
     btn.title = "Anular";
     btn.textContent = "Anular";
-    btn.addEventListener("click", () => anularVale(v.id, v.nombre));
+    btn.addEventListener("click", () => anularVale(v));
     acciones.appendChild(btn);
     tr.appendChild(acciones);
     tbody.appendChild(tr);
@@ -1398,7 +1424,7 @@ function renderAdmin() {
       btn.className = "btn-anular";
       btn.title = "Anular";
       btn.textContent = "Anular";
-      btn.addEventListener("click", () => anularVale(v.id, v.nombre));
+      btn.addEventListener("click", () => anularVale(v));
       acciones.appendChild(btn);
     }
     tr.appendChild(acciones);

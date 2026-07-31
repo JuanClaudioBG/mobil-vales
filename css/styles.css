@@ -1440,6 +1440,15 @@ tr.inv-row--vencido td {
   background: rgba(239, 83, 80, 0.12);
 }
 
+/* Folio real de Combusa: es el dato que se lee en la gasolinera, así que va
+   más grande y en el color de texto normal (el código generado sigue gris). */
+.qr-code--folio {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.06em;
+}
+
 /* Vencimiento del vale real en el modal del QR */
 .qr-vence {
   margin: 0 0 0.4rem;
