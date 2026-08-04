@@ -329,6 +329,7 @@ export function buildVoucherLayout(items, images, pageSize) {
 // castiga la memoria en móvil. Se reaprovechan cambiándoles el tamaño.
 let scratchCanvas = null;
 let outCanvas = null;
+let decodeCanvas = null;
 function getScratch(which, width, height) {
   const ref = which === "out" ? (outCanvas ||= document.createElement("canvas"))
                               : (scratchCanvas ||= document.createElement("canvas"));
@@ -596,11 +597,52 @@ async function extractQrBase64(page, rect) {
   return base64; // el más pequeño posible, aunque exceda el tope
 }
 
+// Decodifica exactamente el PNG que se guardará en Firestore. Así la
+// validación comprueba la misma imagen que luego verá/compartirá la app, no un
+// lienzo intermedio que podría tener distinto recorte o escala.
+async function decodeQrBase64(base64) {
+  if (typeof window.jsQR !== "function") {
+    throw new Error("No se pudo cargar jsQR desde la CDN. Revisa la conexión e inténtalo de nuevo.");
+  }
+
+  const image = new Image();
+  image.decoding = "sync";
+  const loaded = new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error("No se pudo preparar el PNG del QR para validarlo."));
+  });
+  image.src = `data:image/png;base64,${base64}`;
+  await loaded;
+
+  decodeCanvas ||= document.createElement("canvas");
+  decodeCanvas.width = image.naturalWidth;
+  decodeCanvas.height = image.naturalHeight;
+  const ctx = decodeCanvas.getContext("2d", { willReadFrequently: true });
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, decodeCanvas.width, decodeCanvas.height);
+  ctx.drawImage(image, 0, 0);
+  const pixels = ctx.getImageData(0, 0, decodeCanvas.width, decodeCanvas.height);
+  const decoded = window.jsQR(pixels.data, pixels.width, pixels.height, {
+    inversionAttempts: "attemptBoth",
+  });
+  return decoded && typeof decoded.data === "string" && decoded.data
+    ? decoded.data
+    : null;
+}
+
+export function qrPayloadMatchesFolio(decodedPayload, folio) {
+  return (
+    typeof decodedPayload === "string" &&
+    decodedPayload.includes(String(folio))
+  );
+}
+
 // ===========================================================================
 //  API principal
 // ===========================================================================
 // Lee el PDF y devuelve { vouchers, problemas }.
-//   vouchers: [{ folio, monto, vencimiento, qrImageBase64, pagina }]
+//   vouchers: [{ folio, monto, vencimiento, qrImageBase64, decodedPayload,
+//                decodeError, pagina }]
 //   problemas: mensajes de los vales que no se pudieron leer
 // `onProgress({ page, pages, found })` se llama durante el análisis.
 export async function extractVouchersFromPdf(file, onProgress = () => {}) {
@@ -648,11 +690,15 @@ export async function extractVouchersFromPdf(file, onProgress = () => {}) {
           problemas.push(`Folio ${cell.folio} (pág. ${n}): el QR salió en blanco.`);
           continue;
         }
+        const decodedPayload = await decodeQrBase64(qrImageBase64);
+        const decodeError = !qrPayloadMatchesFolio(decodedPayload, cell.folio);
         vouchers.push({
           folio: cell.folio,
           monto: cell.monto,
           vencimiento: cell.vencimiento,
           qrImageBase64,
+          decodedPayload,
+          decodeError,
           pagina: n,
         });
         onProgress({ page: n, pages: pdf.numPages, found: vouchers.length });

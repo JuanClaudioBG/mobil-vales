@@ -8,7 +8,7 @@ rules_version = '2';
 //  A petición explícita, esta colección permite LECTURA y ESCRITURA
 //  SIN AUTENTICACIÓN. El "PIN" de la app es sólo del lado del cliente y
 //  NO protege estos datos: cualquiera que conozca el projectId puede leer,
-//  crear, modificar o borrar documentos directamente.
+//  crear o modificar documentos directamente dentro de las validaciones.
 //
 //  Estas reglas hacen lo ÚNICO posible sin autenticación: validar la FORMA
 //  y el TAMAÑO de cada documento para limitar spam, basura y ataques de
@@ -52,11 +52,15 @@ rules_version = '2';
 //  Campos:
 //    - folio:          string   (requerido, 1..16, sólo dígitos; == ID del doc)
 //    - monto:          number   (requerido, en [200, 300, 500, 1000])
-//    - status:         string   (requerido, en ['disponible','asignado',
-//                                'canjeado','vencido'])
+//    - status:         string   (requerido, en ['disponible',
+//                                'revision_requerida','asignado','canjeado',
+//                                'vencido'])
 //    - vencimiento:    string   (requerido pero puede ser null; "YYYY-MM-DD")
 //    - qrImageBase64:  string   (requerido, <=80000; PNG en base64 del QR real
 //                                extraído del PDF de Combusa. ~6KB por vale)
+//    - decodeError:    bool     (sólo si requiere revisión; siempre true)
+//    - decodedPayload: string   (sólo si requiere revisión; null o <=2048;
+//                                texto devuelto por jsQR)
 //    - asignadoA:      string   (o null; persona a la que se asignó)
 //    - asignadoEn:     timestamp(o null; cuándo se asignó)
 //    - batchId:        string   (o null, <=64; lote de registro que lo asignó)
@@ -142,7 +146,8 @@ service cloud.firestore {
       return hasOnlyAllowedFields() &&
              hasValidCommonFields() &&
              request.resource.data.fechaVale is timestamp &&
-             request.resource.data.createdAt is timestamp;
+             request.resource.data.createdAt is timestamp &&
+             request.resource.data.createdAt == request.time;
     }
 
     // UPDATE: tolera documentos ANTIGUOS (campo 'fecha' en vez de 'fechaVale',
@@ -157,6 +162,15 @@ service cloud.firestore {
               request.resource.data.createdAt is timestamp);
     }
 
+    function isValidValeAnnulment() {
+      return isValidUpdatedVale() &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['anulado', 'anuladoEn']) &&
+             request.resource.data.anulado == true &&
+             request.resource.data.anuladoEn is timestamp &&
+             request.resource.data.anuladoEn == request.time;
+    }
+
     // --------- Colección de vales ---------
     match /vales/{valeId} {
       // Lectura pública (solicitada explícitamente; datos no sensibles).
@@ -165,7 +179,7 @@ service cloud.firestore {
       // Escritura pública, pero SÓLO si el documento cumple el esquema.
       allow create: if isValidNewVale();
       // El borrado suave (anular) es un 'update'; tolera documentos antiguos.
-      allow update: if isValidUpdatedVale();
+      allow update: if isValidValeAnnulment();
 
       // Sin borrado físico: se usa borrado suave (anulado = true).
       allow delete: if false;
@@ -183,7 +197,8 @@ service cloud.firestore {
       function invHasOnlyAllowedFields() {
         return request.resource.data.keys().hasOnly(
           ['folio', 'monto', 'status', 'vencimiento', 'qrImageBase64',
-           'asignadoA', 'asignadoEn', 'batchId', 'importadoEn', 'importadoPor']
+           'decodeError', 'decodedPayload', 'asignadoA', 'asignadoEn',
+           'batchId', 'importadoEn', 'importadoPor']
         );
       }
 
@@ -209,7 +224,24 @@ service cloud.firestore {
                 request.resource.data.vencimiento.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
       }
 
-      function invIsValidNew() {
+      function invValidDecodeMetadata() {
+        return (!('decodeError' in request.resource.data) ||
+                request.resource.data.decodeError is bool) &&
+               (!('decodedPayload' in request.resource.data) ||
+                request.resource.data.decodedPayload == null ||
+                (request.resource.data.decodedPayload is string &&
+                 request.resource.data.decodedPayload.size() <= 2048)) &&
+               // Un folio bloqueado para revisión siempre conserva el
+               // resultado de jsQR (null si no hubo decodificación).
+               (request.resource.data.status != 'revision_requerida' ||
+                (request.resource.data.keys()
+                   .hasAll(['decodeError', 'decodedPayload']) &&
+                 request.resource.data.decodeError == true));
+      }
+
+      // Validador completo compartido por CREATE y UPDATE: evita convertir un
+      // documento válido en uno corrupto mediante una actualización parcial.
+      function invIsValidDocument() {
         return invHasOnlyAllowedFields() &&
                request.resource.data.keys().hasAll(
                  ['folio', 'monto', 'status', 'qrImageBase64',
@@ -223,8 +255,10 @@ service cloud.firestore {
                request.resource.data.folio.matches('^[0-9]+$') &&
                (request.resource.data.monto in [200, 300, 500, 1000]) &&
                (request.resource.data.status in
-                 ['disponible', 'asignado', 'canjeado', 'vencido']) &&
+                 ['disponible', 'revision_requerida', 'asignado',
+                  'canjeado', 'vencido']) &&
                invValidVencimiento() &&
+               invValidDecodeMetadata() &&
                // Imagen del QR: ~6KB por vale; el tope evita payloads gigantes.
                request.resource.data.qrImageBase64 is string &&
                request.resource.data.qrImageBase64.size() >= 1 &&
@@ -238,23 +272,62 @@ service cloud.firestore {
                request.resource.data.importadoPor.size() <= 100;
       }
 
-      // UPDATE: sólo la asignación/estado. Folio, monto, vencimiento, QR e
-      // importación quedan congelados desde la creación.
-      //
-      // Cubre los DOS sentidos del ciclo de vida:
-      //   · asignar:  status→'asignado',  asignadoA/asignadoEn/batchId con valor
-      //   · devolver: status→'disponible', esos tres campos a NULL (al anular el
-      //     vale que usaba el folio, el vale de papel no se gastó)
-      // Los tres campos son anulables a propósito: invNullableString /
-      // invNullableTimestamp aceptan null de forma explícita.
-      function invIsValidUpdate() {
-        return request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+      function invIsValidNew() {
+        return invIsValidDocument() &&
                (request.resource.data.status in
-                 ['disponible', 'asignado', 'canjeado', 'vencido']) &&
-               invNullableString('asignadoA', 100) &&
-               invNullableTimestamp('asignadoEn') &&
-               invNullableString('batchId', 64);
+                 ['disponible', 'revision_requerida']) &&
+               ((request.resource.data.status == 'disponible' &&
+                 !('decodeError' in request.resource.data) &&
+                 !('decodedPayload' in request.resource.data)) ||
+                (request.resource.data.status == 'revision_requerida' &&
+                 request.resource.data.decodeError == true)) &&
+               request.resource.data.asignadoA == null &&
+               request.resource.data.asignadoEn == null &&
+               request.resource.data.batchId == null &&
+               request.resource.data.importadoEn == request.time;
+      }
+
+      // Aprobación manual: sólo desbloquea el status. decodeError y el payload
+      // permanecen inmutables como evidencia de la revisión.
+      function invIsApproval() {
+        return resource.data.status == 'revision_requerida' &&
+               request.resource.data.status == 'disponible' &&
+               request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status']);
+      }
+
+      // Asignación normal desde el pool disponible.
+      function invIsAssignment() {
+        return resource.data.status == 'disponible' &&
+               request.resource.data.status == 'asignado' &&
+               request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+               request.resource.data.asignadoA is string &&
+               request.resource.data.asignadoA.size() >= 1 &&
+               request.resource.data.asignadoA.size() <= 100 &&
+               request.resource.data.asignadoEn is timestamp &&
+               request.resource.data.asignadoEn == request.time &&
+               request.resource.data.batchId is string &&
+               request.resource.data.batchId.size() >= 1 &&
+               request.resource.data.batchId.size() <= 64;
+      }
+
+      // Al anular un registro, el vale asignado vuelve al inventario.
+      function invIsReturn() {
+        return resource.data.status == 'asignado' &&
+               request.resource.data.status == 'disponible' &&
+               request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+               request.resource.data.asignadoA == null &&
+               request.resource.data.asignadoEn == null &&
+               request.resource.data.batchId == null;
+      }
+
+      // UPDATE: los datos físicos y el resultado de jsQR son inmutables; sólo
+      // se aceptan las tres transiciones usadas por la aplicación.
+      function invIsValidUpdate() {
+        return invIsValidDocument() &&
+               (invIsApproval() || invIsAssignment() || invIsReturn());
       }
 
       // Lectura pública: la app necesita el QR y las existencias.

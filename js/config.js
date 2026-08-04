@@ -48,7 +48,13 @@ export const MONTOS = [200, 300, 500, 1000, 4000];
 export const INVENTARIO_MONTOS = [200, 300, 500, 1000];
 
 // Estados posibles de un vale del inventario (deben coincidir con las reglas).
-export const INVENTARIO_STATUS = ["disponible", "asignado", "canjeado", "vencido"];
+export const INVENTARIO_STATUS = [
+  "disponible",
+  "revision_requerida",
+  "asignado",
+  "canjeado",
+  "vencido",
+];
 
 // Orden de los departamentos en el selector de persona.
 export const DEPARTAMENTOS = [

@@ -7,6 +7,7 @@
 //  Firestore impide por construcción tener dos veces el mismo folio.
 //
 //  Ciclo de vida del status:
+//    revision_requerida → disponible (tras aprobación manual)
 //    disponible → asignado (al registrar un vale) → canjeado
 //    vencido: la fecha de vencimiento ya pasó (se calcula, no se escribe)
 //
@@ -19,6 +20,7 @@ import {
   limit,
   query,
   serverTimestamp,
+  updateDoc,
   where,
   writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -34,6 +36,18 @@ import { extractVouchersFromPdf } from "./pdf-vales.js";
 // Vales por lote de escritura. 50 documentos ≈ 250KB por petición: muy por
 // debajo del tope de Firestore (500 operaciones) y cómodo en móvil.
 const CHUNK_SIZE = 50;
+
+const STATUS_LABELS = {
+  disponible: "Disponible",
+  revision_requerida: "⚠️ Requiere revisión",
+  asignado: "Asignado",
+  canjeado: "Canjeado",
+  vencido: "Vencido",
+};
+const FILTER_STATUS_LABELS = {
+  ...STATUS_LABELS,
+  revision_requerida: "⚠️ Requieren revisión",
+};
 
 let db = null;
 let inventarioRef = null;
@@ -86,13 +100,14 @@ export function initInventario(options) {
 
   // Filtros de la tabla.
   fillOptions(el.filtroStatus, [["", "Todos los estados"]].concat(
-    INVENTARIO_STATUS.map((s) => [s, capitalize(s)])
+    INVENTARIO_STATUS.map((s) => [s, FILTER_STATUS_LABELS[s] || capitalize(s)])
   ));
   fillOptions(el.filtroMonto, [["", "Todos los montos"]].concat(
     INVENTARIO_MONTOS.map((m) => [String(m), money(m)])
   ));
   el.filtroStatus.addEventListener("change", renderTabla);
   el.filtroMonto.addEventListener("change", renderTabla);
+  el.body.addEventListener("click", onTableClick);
 
   el.importBtn.addEventListener("click", onImportClick);
   el.fileInput.addEventListener("change", onFileChosen);
@@ -367,10 +382,11 @@ async function importarPdf(file) {
     const lote = nuevos.slice(i, i + CHUNK_SIZE);
     const batch = writeBatch(db);
     for (const v of lote) {
-      batch.set(inventarioDocRef(v.folio), {
+      const requiereRevision = Boolean(v.decodeError);
+      const docData = {
         folio: String(v.folio),
         monto: Number(v.monto),
-        status: "disponible",
+        status: requiereRevision ? "revision_requerida" : "disponible",
         vencimiento: v.vencimiento || null,
         qrImageBase64: v.qrImageBase64,
         asignadoA: null,
@@ -378,7 +394,13 @@ async function importarPdf(file) {
         batchId: null,
         importadoEn: serverTimestamp(),
         importadoPor,
-      });
+      };
+      if (requiereRevision) {
+        docData.decodeError = true;
+        docData.decodedPayload =
+          typeof v.decodedPayload === "string" ? v.decodedPayload : null;
+      }
+      batch.set(inventarioDocRef(v.folio), docData);
     }
     await batch.commit();
     guardados += lote.length;
@@ -388,6 +410,8 @@ async function importarPdf(file) {
   // 4) Resumen.
   setProgress("");
   const detalle = resumenPorMonto(nuevos);
+  const validos = nuevos.filter((v) => !v.decodeError).length;
+  const requierenRevision = nuevos.length - validos;
   const avisos = [];
   if (duplicados.length) {
     avisos.push(`${duplicados.length} folios ya existían y se omitieron`);
@@ -402,12 +426,15 @@ async function importarPdf(file) {
   if (problemas.length) avisos.push(`${problemas.length} vales ilegibles en el PDF`);
 
   mostrarResumen(
-    `✅ ${guardados} vales importados: ${detalle}` +
+    `✅ ${guardados} vales importados: ${validos} válidos, ${requierenRevision} requieren revisión` +
+      (detalle ? `\n${detalle}` : "") +
       (avisos.length ? `\n⚠️ ${avisos.join(" · ")}` : "")
   );
   if (problemas.length) console.warn("[inventario] vales ilegibles:", problemas);
 
-  deps.showToast(`✅ ${guardados} vales importados al inventario`);
+  deps.showToast(
+    `✅ ${guardados} importados · ${requierenRevision} requieren revisión`
+  );
 
   await Promise.all([cargarTodos(true), refreshPool()]);
   renderInventario();
@@ -533,12 +560,26 @@ function renderTabla() {
             year: "numeric",
           })
         : "—";
+    const payload =
+      status === "revision_requerida"
+        ? v.decodedPayload || "No se pudo decodificar"
+        : "—";
+    const accion =
+      status === "revision_requerida"
+        ? `<button type="button" class="btn-secondary inv-approve" data-approve-folio="${escapeHtml(
+            String(v.folio)
+          )}">Aprobar</button>`
+        : "—";
     tr.innerHTML =
       `<td class="inv-folio">${escapeHtml(formatFolio(v.folio))}</td>` +
       `<td class="num">${money(v.monto)}</td>` +
-      `<td><span class="badge badge--${status}">${capitalize(status)}</span></td>` +
+      `<td><span class="badge badge--${status}">${escapeHtml(
+        STATUS_LABELS[status] || capitalize(status)
+      )}</span></td>` +
+      `<td><code class="inv-decoded-payload">${escapeHtml(payload)}</code></td>` +
       `<td>${escapeHtml(v.asignadoA || "—")}</td>` +
-      `<td>${asignadoEn}</td>`;
+      `<td>${asignadoEn}</td>` +
+      `<td>${accion}</td>`;
     el.body.appendChild(tr);
   }
 
@@ -547,6 +588,40 @@ function renderTabla() {
     ? "Ningún vale coincide con los filtros."
     : "Aún no hay vales importados. Usa «📥 Importar PDF».";
   el.count.textContent = `${filas.length} de ${todos.length}`;
+}
+
+async function onTableClick(event) {
+  const button = event.target.closest("[data-approve-folio]");
+  if (!button || !el.body.contains(button)) return;
+
+  const folio = String(button.dataset.approveFolio || "");
+  const voucher = todos.find((v) => String(v.folio) === folio);
+  if (!voucher || statusEfectivo(voucher) !== "revision_requerida") return;
+
+  const payload = voucher.decodedPayload || "sin payload decodificado";
+  const ok = await deps.requestAdminPin(
+    `Aprobar el folio ${formatFolio(folio)}. Payload QR: ${payload}`
+  );
+  if (!ok) return;
+
+  button.disabled = true;
+  hideError();
+  try {
+    // Los metadatos de decodificación se conservan como evidencia; aprobar
+    // sólo habilita el vale para entrar al pool de asignación.
+    await updateDoc(inventarioDocRef(folio), { status: "disponible" });
+    todosCargados = false;
+    await Promise.all([cargarTodos(true), refreshPool()]);
+    renderInventario();
+    deps.showToast(`✅ Folio ${formatFolio(folio)} aprobado`);
+  } catch (err) {
+    console.error("[inventario] aprobación:", err);
+    button.disabled = false;
+    showError(
+      `No se pudo aprobar el folio ${formatFolio(folio)}: ` +
+        (err && err.message ? err.message : err)
+    );
+  }
 }
 
 // "117765" → "117,765" (como lo imprime Combusa)

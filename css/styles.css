@@ -1417,6 +1417,10 @@ tr.row-socio td {
 .badge--disponible {
   background: var(--familia);
 }
+.badge--revision_requerida {
+  background: #c66a00;
+  color: #fff8eb;
+}
 .badge--asignado {
   background: var(--accent);
   color: var(--accent-ink);
@@ -1430,6 +1434,9 @@ tr.row-socio td {
 tr.inv-row--disponible td {
   background: rgba(38, 162, 105, 0.09);
 }
+tr.inv-row--revision_requerida td {
+  background: rgba(198, 106, 0, 0.14);
+}
 tr.inv-row--asignado td {
   background: rgba(245, 166, 35, 0.1);
 }
@@ -1438,6 +1445,22 @@ tr.inv-row--canjeado td {
 }
 tr.inv-row--vencido td {
   background: rgba(239, 83, 80, 0.12);
+}
+
+.inv-decoded-payload {
+  display: inline-block;
+  max-width: 19rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+.inv-approve {
+  min-height: 2rem;
+  padding: 0.35rem 0.7rem;
+  border-color: rgba(198, 106, 0, 0.65);
+  color: #ffd79c;
 }
 
 /* Folio real de Combusa: es el dato que se lee en la gasolinera, así que va

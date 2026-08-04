@@ -262,8 +262,10 @@
                   <th>Folio</th>
                   <th class="num">Monto</th>
                   <th>Status</th>
+                  <th>Payload QR</th>
                   <th>Asignado a</th>
                   <th>Fecha asignación</th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody id="inv-body"></tbody>
@@ -345,6 +347,8 @@
       </div>
     </main>
 
+    <!-- jsQR valida los QR extraídos del PDF antes de guardarlos. -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
     <!-- qrcode.js (global window.QRCode); script clásico → se ejecuta antes que el módulo -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script type="module" src="./js/app.js"></script>
