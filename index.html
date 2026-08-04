@@ -145,14 +145,17 @@
         <div class="dash-controls">
           <label>Mes <input type="month" id="dash-mes" /></label>
         </div>
-        <div class="stat-grid">
+        <div class="stat-grid dash-stat-grid">
           <div class="stat-card">
             <span class="stat-label">Vales del mes</span>
             <strong id="dash-count">0</strong>
           </div>
           <div class="stat-card">
             <span class="stat-label">Total del mes</span>
-            <strong id="dash-total">$0</strong>
+            <div class="stat-value-row">
+              <strong id="dash-total">$0</strong>
+              <span id="dash-trend" class="stat-trend" hidden></span>
+            </div>
           </div>
           <div class="stat-card">
             <span class="stat-label">Empleados</span>
@@ -178,9 +181,19 @@
         <div class="card">
           <h2>Total por mes (últimos 6 meses)</h2>
           <div class="chart-wrap">
-            <canvas id="dash-chart" width="640" height="260"></canvas>
+            <canvas id="dash-chart" width="640" height="338"></canvas>
           </div>
           <div id="dash-legend" class="chart-legend"></div>
+          <button
+            type="button"
+            id="dash-legend-toggle"
+            class="link-btn legend-toggle"
+            aria-controls="dash-legend"
+            aria-expanded="false"
+            hidden
+          >
+            Ver todos
+          </button>
         </div>
       </section>
 

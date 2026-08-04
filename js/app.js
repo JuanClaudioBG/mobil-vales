@@ -130,6 +130,7 @@ const views = {
 const dashMes = $("#dash-mes");
 const dashCount = $("#dash-count");
 const dashTotal = $("#dash-total");
+const dashTrend = $("#dash-trend");
 const dashEmp = $("#dash-emp");
 const dashFam = $("#dash-fam");
 const dashSoc = $("#dash-soc");
@@ -137,6 +138,7 @@ const dashTop = $("#dash-top");
 const dashTopEmpty = $("#dash-top-empty");
 const dashChart = $("#dash-chart");
 const dashLegend = $("#dash-legend");
+const dashLegendToggle = $("#dash-legend-toggle");
 const dashVerTodos = $("#dash-vertodos");
 
 // Admin
@@ -161,6 +163,7 @@ const MAX_VALES = 20; // tope de vales por registro
 let pendingSave = null; // payload en espera de confirmación
 let saving = false; // evita doble envío
 let dashExpanded = false; // leaderboard: mostrar todos vs top 5
+let legendExpanded = false; // leyenda de la gráfica: mostrar todos vs top 5
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -1205,10 +1208,15 @@ function renderHistorial() {
 // ===========================================================================
 dashMes.addEventListener("change", () => {
   dashExpanded = false; // al cambiar de mes, colapsa el leaderboard
+  legendExpanded = false;
   renderDashboard();
 });
 dashVerTodos.addEventListener("click", () => {
   dashExpanded = !dashExpanded;
+  renderDashboard();
+});
+dashLegendToggle.addEventListener("click", () => {
+  legendExpanded = !legendExpanded;
   renderDashboard();
 });
 
@@ -1224,12 +1232,20 @@ function renderDashboard() {
   dashCount.textContent = String(delMes.length);
   dashTotal.textContent = money(total);
 
+  // Comparación contra el mes inmediato anterior. Si ese mes no tuvo vales,
+  // se oculta para evitar porcentajes engañosos o divisiones entre cero.
+  const mesAnterior = lastNMonths(mes, 2)[0];
+  const delMesAnterior = activos(allVales).filter(
+    (v) => monthKey(valeDate(v)) === mesAnterior.key
+  );
+  renderMonthTrend(total, delMesAnterior, mesAnterior.label);
+
   const emp = delMes.filter((v) => v.categoria === "Empleado");
   const fam = delMes.filter((v) => v.categoria === "Familia");
   const soc = delMes.filter((v) => v.categoria === "Socio");
-  dashEmp.textContent = `${emp.length} · ${money(sum(emp.map((v) => v.monto)))}`;
-  dashFam.textContent = `${fam.length} · ${money(sum(fam.map((v) => v.monto)))}`;
-  dashSoc.textContent = `${soc.length} · ${money(sum(soc.map((v) => v.monto)))}`;
+  renderCategoryStat(dashEmp, emp);
+  renderCategoryStat(dashFam, fam);
+  renderCategoryStat(dashSoc, soc);
 
   // Leaderboard del mes (ordenado por total desc)
   const ranking = [...groupSum(delMes, (v) => v.nombre).entries()].sort(
@@ -1239,6 +1255,27 @@ function renderDashboard() {
 
   // Gráfica apilada por persona (últimos 6 meses terminando en `mes`)
   renderStackedChart(mes);
+}
+
+function renderCategoryStat(valueEl, vales) {
+  const total = sum(vales.map((v) => v.monto));
+  valueEl.textContent = `${vales.length} · ${money(total)}`;
+  valueEl.closest(".stat-card").hidden = vales.length === 0 && total === 0;
+}
+
+function renderMonthTrend(total, valesAnteriores, mesLabel) {
+  if (valesAnteriores.length === 0) {
+    dashTrend.hidden = true;
+    return;
+  }
+
+  const anterior = sum(valesAnteriores.map((v) => v.monto));
+  const cambio = anterior ? Math.round(((total - anterior) / anterior) * 100) : 0;
+  const direccion = cambio > 0 ? "up" : cambio < 0 ? "down" : "flat";
+  const flecha = cambio > 0 ? "↑" : cambio < 0 ? "↓" : "→";
+  dashTrend.className = `stat-trend stat-trend--${direccion}`;
+  dashTrend.textContent = `${flecha} ${Math.abs(cambio)}% vs ${mesLabel}`;
+  dashTrend.hidden = false;
 }
 
 function renderLeaderboard(ranking) {
@@ -1292,8 +1329,9 @@ function renderStackedChart(mes) {
 }
 
 function renderLegend(personas) {
+  const visibles = legendExpanded ? personas : personas.slice(0, 5);
   dashLegend.innerHTML = "";
-  for (const nombre of personas) {
+  for (const nombre of visibles) {
     const item = document.createElement("span");
     item.className = "legend-item";
     item.innerHTML =
@@ -1301,6 +1339,12 @@ function renderLegend(personas) {
       escapeHtml(nombre);
     dashLegend.appendChild(item);
   }
+
+  dashLegendToggle.hidden = personas.length <= 5;
+  dashLegendToggle.textContent = legendExpanded
+    ? "Ver menos"
+    : `Ver todos (${personas.length})`;
+  dashLegendToggle.setAttribute("aria-expanded", String(legendExpanded));
 }
 
 function drawStackedBarChart(canvas, meses, matrix, personas) {
@@ -1311,7 +1355,7 @@ function drawStackedBarChart(canvas, meses, matrix, personas) {
   // clientWidth es 0 → respaldo 640; al abrir la pestaña se redibuja bien.
   const wrap = canvas.parentElement;
   const cssW = Math.max(300, Math.min(640, wrap.clientWidth || 640));
-  const cssH = 260;
+  const cssH = 338;
   canvas.style.width = cssW + "px";
   canvas.style.height = cssH + "px";
   canvas.width = Math.round(cssW * dpr);
