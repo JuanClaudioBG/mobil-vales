@@ -15,6 +15,12 @@
     <link rel="stylesheet" href="./css/styles.css" />
   </head>
   <body>
+    <!-- Se muestra cuando version.json cambia mientras la app está abierta. -->
+    <div id="update-banner" class="update-banner" role="status" aria-live="polite" hidden>
+      <span>🔄 Nueva versión disponible —</span>
+      <button type="button" id="btn-update-app">Actualizar</button>
+    </div>
+
     <!-- Pantalla de PIN ------------------------------------------------->
     <section id="pin-screen" class="pin-screen">
       <form id="pin-form" class="pin-card">

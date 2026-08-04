@@ -67,6 +67,13 @@ python3 -m http.server 8000
 El archivo `.nojekyll` ya está incluido para que GitHub Pages sirva los archivos
 tal cual.
 
+### Aviso automático de nuevas versiones
+
+Antes de publicar un cambio significativo, actualiza el valor `version` de
+`version.json` y el valor `CURRENT_APP_VERSION` de `js/app.js` para que ambos
+coincidan. La app consulta el JSON sin caché cada 60 segundos; si una copia
+anterior detecta una versión distinta, ofrece recargar la página automáticamente.
+
 ---
 
 ## Estructura del proyecto

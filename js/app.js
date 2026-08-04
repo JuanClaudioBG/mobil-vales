@@ -67,6 +67,8 @@ const filtroNombre = $("#filtro-nombre");
 const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
+const updateBanner = $("#update-banner");
+const updateAppBtn = $("#btn-update-app");
 
 // Formulario: persona / categoría automática / fecha del vale
 const personaSelect = $("#persona");
@@ -181,6 +183,55 @@ function showAppError(msg) {
 function clearAppError() {
   appError.hidden = true;
 }
+
+// --- Detección ligera de nuevas versiones desplegadas ----------------------
+const VERSION_POLL_MS = 60_000;
+// Al publicar, este valor debe coincidir con version.json. Una copia vieja de
+// app.js conservará su versión anterior y detectará el JSON recién desplegado.
+const CURRENT_APP_VERSION = "2026-08-04";
+let knownAppVersion = CURRENT_APP_VERSION;
+let availableAppVersion = null;
+
+async function checkAppVersion() {
+  try {
+    // El parámetro único evita además que una CDN intermedia entregue una
+    // copia anterior aunque el navegador respete `cache: "no-store"`.
+    const versionUrl = new URL("./version.json", window.location.href);
+    versionUrl.searchParams.set("_", String(Date.now()));
+    const response = await fetch(versionUrl, { cache: "no-store" });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const version = String(data.version || "").trim();
+    if (!version) return;
+
+    if (version !== knownAppVersion) {
+      availableAppVersion = version;
+      updateBanner.hidden = false;
+    }
+  } catch (err) {
+    // Un fallo de red no afecta el uso normal; el siguiente sondeo reintenta.
+    console.warn("[version] No se pudo comprobar la versión:", err);
+  }
+}
+
+function initVersionCheck() {
+  checkAppVersion();
+  window.setInterval(checkAppVersion, VERSION_POLL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) checkAppVersion();
+  });
+}
+
+updateAppBtn.addEventListener("click", () => {
+  // Cambiar la URL del documento fuerza una navegación nueva incluso en modo
+  // PWA/home screen, sin depender del soporte obsoleto de reload(true).
+  const reloadUrl = new URL(window.location.href);
+  reloadUrl.searchParams.set("_app_version", availableAppVersion || String(Date.now()));
+  window.location.replace(reloadUrl.toString());
+});
+
+initVersionCheck();
 
 // --- Puerta de PIN (sólo cosmética, ver advertencia en config.js) ----------
 let inventarioIniciado = false;
