@@ -1289,6 +1289,41 @@ tr.row-socio td {
     font-size: 0.72rem;
   }
 
+  /* Inventario: conserva sólo los datos operativos y permite desplazamiento
+     horizontal si las cinco columnas no caben en la pantalla. */
+  #view-inventario .table-wrap {
+    overflow-x: auto;
+  }
+  #view-inventario table {
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    table-layout: auto;
+    font-size: 0.75rem;
+  }
+  #view-inventario th,
+  #view-inventario td {
+    font-size: 0.75rem;
+  }
+  #view-inventario th {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+  #view-inventario th:nth-child(4),
+  #view-inventario td:nth-child(4),
+  #view-inventario th:nth-child(6),
+  #view-inventario td:nth-child(6) {
+    display: none;
+  }
+  #view-inventario th:nth-child(1),
+  #view-inventario td:nth-child(1),
+  #view-inventario th:nth-child(2),
+  #view-inventario td:nth-child(2),
+  #view-inventario .badge {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
