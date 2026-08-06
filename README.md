@@ -72,8 +72,23 @@ tal cual.
 Antes de publicar un cambio significativo, sube a mano el valor `version` de
 `version.json` (formato sugerido: `AAAA-MM-DD-N`). Es el único archivo que hay
 que tocar: la app guarda la versión que leyó al cargar y consulta el JSON sin
-caché cada 60 segundos. Si detecta un valor distinto, muestra una barra roja
-«🔄 Nueva versión disponible» con un botón «Actualizar» que recarga la página.
+caché cada 60 segundos.
+
+Al detectar un valor distinto la app **se recarga sola**, sin preguntar y sin
+que el usuario tenga que pulsar nada. Antes de recargar comprueba que no haya
+nada a medias; se considera que NO es seguro recargar si:
+
+- hay una persona seleccionada en el formulario, montos en el carrito o texto
+  en «Notas»;
+- se está guardando un registro en Firestore;
+- hay un modal abierto (confirmación, QR del vale o PIN de administrador) —el
+  QR es la única copia que el usuario tiene del vale recién generado;
+- hay una importación de PDF en curso.
+
+En ese caso aparece la barra roja «🔄 Actualización disponible — se aplicará
+cuando termines», puramente informativa (no tiene botón), y la app reintenta
+cada 2 segundos: en cuanto el usuario cierra el modal o termina el registro,
+se recarga al instante.
 
 ---
 

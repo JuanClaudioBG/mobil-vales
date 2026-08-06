@@ -15,12 +15,12 @@
     <link rel="stylesheet" href="./css/styles.css" />
   </head>
   <body>
-    <!-- Se muestra cuando version.json cambia mientras la app está abierta.
-         Va antes que el resto del documento: la barra ocupa el borde superior
-         de la pantalla, por encima de la topbar. -->
+    <!-- Sólo aparece si se detecta una versión nueva mientras hay un registro a
+         medias: es informativo, sin botón. La recarga se hace sola en cuanto el
+         usuario termina. Va antes que el resto del documento: la barra ocupa el
+         borde superior de la pantalla, por encima de la topbar. -->
     <div id="update-banner" class="update-banner" role="status" aria-live="polite" hidden>
-      <span class="update-banner-text">🔄 Nueva versión disponible</span>
-      <button type="button" id="btn-update-app" class="update-banner-btn">Actualizar</button>
+      <span class="update-banner-text">🔄 Actualización disponible — se aplicará cuando termines</span>
     </div>
 
     <!-- Pantalla de PIN ------------------------------------------------->

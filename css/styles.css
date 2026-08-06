@@ -130,20 +130,6 @@ select:focus {
 .update-banner-text {
   color: #fff;
 }
-.update-banner-btn {
-  flex: 0 0 auto;
-  padding: 0.3rem 0.9rem;
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  border-radius: 999px;
-  background: #fff;
-  color: #e31e24;
-  font-size: 0.85rem;
-  font-weight: 700;
-}
-.update-banner-btn:hover {
-  filter: none;
-  background: #ffe9ea;
-}
 
 /* Reserva el alto real de la barra (lo mide app.js) para que no tape la
    topbar ni la pantalla de PIN. */

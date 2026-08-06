@@ -72,10 +72,13 @@ const dashRefreshBtn = $("#btn-dash-actualizar");
 // Dashboard). Se deshabilitan en bloque mientras dura la lectura.
 const refreshButtons = [refreshBtn, dashRefreshBtn].filter(Boolean);
 const updateBanner = $("#update-banner");
-const updateAppBtn = $("#btn-update-app");
+// Aviso de avance de la importación de PDF: mientras esté visible hay una
+// importación en curso y no se debe recargar.
+const invProgress = $("#inv-progress");
 
 // Formulario: persona / categoría automática / fecha del vale
 const personaSelect = $("#persona");
+const notasInput = $("#notas");
 const catAuto = $("#cat-auto");
 const fechaValeInput = $("#fecha-vale");
 const fechaAnteriorToggle = $("#fecha-anterior-toggle");
@@ -188,14 +191,28 @@ function clearAppError() {
   appError.hidden = true;
 }
 
-// --- Detección ligera de nuevas versiones desplegadas ----------------------
+// --- Detección de nuevas versiones y recarga automática --------------------
+// Al detectar un despliegue nuevo la app se recarga sola, pero NUNCA encima de
+// un registro a medias: primero comprueba que no haya nada que perder. Si lo
+// hay, muestra un aviso informativo y espera, reintentando cada pocos segundos
+// hasta que el usuario termina; entonces recarga sin preguntar.
 const VERSION_POLL_MS = 60_000;
+const SAFETY_POLL_MS = 2_000;
+// Margen mínimo entre recargas automáticas. Si version.json se sirviera de
+// forma inconsistente (p. ej. una CDN a medio propagar que alterna entre la
+// versión vieja y la nueva), sin este tope la app podría entrar en un ciclo de
+// recargas. Con el margen, lo peor que puede pasar es una recarga por minuto.
+const MIN_RELOAD_GAP_MS = 60_000;
+const RELOAD_STAMP_KEY = "vales_ultima_recarga_auto";
+
 // La versión que traía version.json cuando se cargó la app. No se fija a mano:
 // la primera lectura la establece, y a partir de ahí cualquier valor distinto
 // significa que se publicó un despliegue nuevo mientras la pestaña seguía
 // abierta. Basta con subir el string de version.json al desplegar.
 let knownAppVersion = null;
+let updatePendiente = false; // ya se detectó una versión nueva sin aplicar
 let updateBannerVisible = false;
+let safetyTimer = null;
 
 async function checkAppVersion() {
   try {
@@ -213,12 +230,67 @@ async function checkAppVersion() {
     if (knownAppVersion === null) {
       knownAppVersion = version; // primera lectura: la versión de esta sesión
     } else if (version !== knownAppVersion) {
-      showUpdateBanner();
+      onNuevaVersion();
     }
   } catch (err) {
     // Un fallo de red no afecta el uso normal; el siguiente sondeo reintenta.
     console.warn("[version] No se pudo comprobar la versión:", err);
   }
+}
+
+// ¿Se puede recargar ahora mismo sin que el usuario pierda nada?
+function isSafeToReload() {
+  // Registro a medio capturar: se perdería lo tecleado.
+  if (personaSelect.value) return false;
+  if (carrito.size > 0) return false;
+  if (notasInput.value.trim()) return false;
+  // Guardado en vuelo: recargar dejaría el lote a medias.
+  if (saving) return false;
+  // Cualquier modal abierto (confirmación, QR del vale, PIN de administrador):
+  // el QR es la única copia que el usuario tiene del vale recién generado.
+  if (!confirmModal.hidden || !qrModal.hidden || !adminPinModal.hidden) return false;
+  // Importación de PDF en curso: el aviso de avance sigue visible.
+  if (invProgress && !invProgress.hidden) return false;
+  return true;
+}
+
+// Recarga sólo si es seguro. Devuelve true si la recarga se disparó.
+function tryAutoReload() {
+  if (!isSafeToReload()) return false;
+  if (recargadaHacePoco()) return false; // ver MIN_RELOAD_GAP_MS
+  aplicarUpdate();
+  return true;
+}
+
+function recargadaHacePoco() {
+  try {
+    const previa = Number(sessionStorage.getItem(RELOAD_STAMP_KEY));
+    return Number.isFinite(previa) && Date.now() - previa < MIN_RELOAD_GAP_MS;
+  } catch (_) {
+    return false; // sin sessionStorage (modo privado antiguo): no bloquea
+  }
+}
+
+function aplicarUpdate() {
+  if (safetyTimer) window.clearInterval(safetyTimer);
+  try {
+    sessionStorage.setItem(RELOAD_STAMP_KEY, String(Date.now()));
+  } catch (_) {
+    /* si no se puede escribir, la recarga sigue adelante */
+  }
+  window.location.reload();
+}
+
+function onNuevaVersion() {
+  if (updatePendiente) return; // ya hay una actualización en espera
+  updatePendiente = true;
+
+  // Camino normal: nadie está capturando nada → se recarga en el acto.
+  if (tryAutoReload()) return;
+
+  // Hay trabajo a medias: se avisa y se espera a que termine.
+  showUpdateBanner();
+  safetyTimer = window.setInterval(tryAutoReload, SAFETY_POLL_MS);
 }
 
 function showUpdateBanner() {
@@ -251,10 +323,6 @@ function initVersionCheck() {
     if (!document.hidden) checkAppVersion();
   });
 }
-
-updateAppBtn.addEventListener("click", () => {
-  window.location.reload();
-});
 
 initVersionCheck();
 
@@ -553,7 +621,7 @@ valeForm.addEventListener("submit", async (e) => {
     nombre: persona ? persona.nombre : "",
     categoria: persona ? persona.categoria : "",
     registradoPor: registradoPorInput.value.trim(),
-    notas: $("#notas").value.trim(),
+    notas: notasInput.value.trim(),
     fechaValeStr,
   };
 
