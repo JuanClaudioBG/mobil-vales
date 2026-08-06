@@ -69,10 +69,11 @@ tal cual.
 
 ### Aviso automático de nuevas versiones
 
-Antes de publicar un cambio significativo, actualiza el valor `version` de
-`version.json` y el valor `CURRENT_APP_VERSION` de `js/app.js` para que ambos
-coincidan. La app consulta el JSON sin caché cada 60 segundos; si una copia
-anterior detecta una versión distinta, ofrece recargar la página automáticamente.
+Antes de publicar un cambio significativo, sube a mano el valor `version` de
+`version.json` (formato sugerido: `AAAA-MM-DD-N`). Es el único archivo que hay
+que tocar: la app guarda la versión que leyó al cargar y consulta el JSON sin
+caché cada 60 segundos. Si detecta un valor distinto, muestra una barra roja
+«🔄 Nueva versión disponible» con un botón «Actualizar» que recarga la página.
 
 ---
 

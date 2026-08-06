@@ -15,10 +15,12 @@
     <link rel="stylesheet" href="./css/styles.css" />
   </head>
   <body>
-    <!-- Se muestra cuando version.json cambia mientras la app está abierta. -->
+    <!-- Se muestra cuando version.json cambia mientras la app está abierta.
+         Va antes que el resto del documento: la barra ocupa el borde superior
+         de la pantalla, por encima de la topbar. -->
     <div id="update-banner" class="update-banner" role="status" aria-live="polite" hidden>
-      <span>🔄 Nueva versión disponible —</span>
-      <button type="button" id="btn-update-app">Actualizar</button>
+      <span class="update-banner-text">🔄 Nueva versión disponible</span>
+      <button type="button" id="btn-update-app" class="update-banner-btn">Actualizar</button>
     </div>
 
     <!-- Pantalla de PIN ------------------------------------------------->
@@ -150,6 +152,7 @@
       <section id="view-dashboard" class="view" hidden>
         <div class="dash-controls">
           <label>Mes <input type="month" id="dash-mes" /></label>
+          <button type="button" id="btn-dash-actualizar" class="btn-secondary">↻ Actualizar</button>
         </div>
         <div class="stat-grid dash-stat-grid">
           <div class="stat-card">

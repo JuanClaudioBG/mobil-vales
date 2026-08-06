@@ -1,3 +1,4 @@
 {
-  "version": "2026-08-04"
+  "_comment": "Sube este valor 'version' A MANO cada vez que publiques un cambio y quieras avisar a los usuarios. La app consulta este archivo sin caché cada 60 s; si el valor cambia mientras una pestaña sigue abierta, aparece la barra roja 'Nueva versión disponible' con el botón Actualizar. Formato sugerido: AAAA-MM-DD-N (N = despliegue del día). JSON no admite comentarios reales, por eso esto es un campo; la app sólo lee 'version'.",
+  "version": "2026-08-05-1"
 }

@@ -67,6 +67,10 @@ const filtroNombre = $("#filtro-nombre");
 const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
+const dashRefreshBtn = $("#btn-dash-actualizar");
+// Botones «↻ Actualizar» que recargan los vales desde Firestore (Historial y
+// Dashboard). Se deshabilitan en bloque mientras dura la lectura.
+const refreshButtons = [refreshBtn, dashRefreshBtn].filter(Boolean);
 const updateBanner = $("#update-banner");
 const updateAppBtn = $("#btn-update-app");
 
@@ -186,11 +190,12 @@ function clearAppError() {
 
 // --- Detección ligera de nuevas versiones desplegadas ----------------------
 const VERSION_POLL_MS = 60_000;
-// Al publicar, este valor debe coincidir con version.json. Una copia vieja de
-// app.js conservará su versión anterior y detectará el JSON recién desplegado.
-const CURRENT_APP_VERSION = "2026-08-04";
-let knownAppVersion = CURRENT_APP_VERSION;
-let availableAppVersion = null;
+// La versión que traía version.json cuando se cargó la app. No se fija a mano:
+// la primera lectura la establece, y a partir de ahí cualquier valor distinto
+// significa que se publicó un despliegue nuevo mientras la pestaña seguía
+// abierta. Basta con subir el string de version.json al desplegar.
+let knownAppVersion = null;
+let updateBannerVisible = false;
 
 async function checkAppVersion() {
   try {
@@ -205,15 +210,39 @@ async function checkAppVersion() {
     const version = String(data.version || "").trim();
     if (!version) return;
 
-    if (version !== knownAppVersion) {
-      availableAppVersion = version;
-      updateBanner.hidden = false;
+    if (knownAppVersion === null) {
+      knownAppVersion = version; // primera lectura: la versión de esta sesión
+    } else if (version !== knownAppVersion) {
+      showUpdateBanner();
     }
   } catch (err) {
     // Un fallo de red no afecta el uso normal; el siguiente sondeo reintenta.
     console.warn("[version] No se pudo comprobar la versión:", err);
   }
 }
+
+function showUpdateBanner() {
+  if (updateBannerVisible) return; // una vez visible, ahí se queda
+  updateBannerVisible = true;
+
+  updateBanner.hidden = false;
+  syncUpdateBannerHeight();
+  document.body.classList.add("has-update");
+  // El siguiente frame: con el elemento ya visible, la clase .show sí anima el
+  // translateY (si se añadiera en el mismo frame el navegador no interpola).
+  requestAnimationFrame(() => updateBanner.classList.add("show"));
+}
+
+// El texto puede envolverse en pantallas estrechas, así que el hueco reservado
+// bajo la barra se toma de su alto real en lugar de un valor fijo.
+function syncUpdateBannerHeight() {
+  if (!updateBannerVisible) return;
+  document.documentElement.style.setProperty(
+    "--update-banner-h",
+    updateBanner.offsetHeight + "px"
+  );
+}
+window.addEventListener("resize", syncUpdateBannerHeight);
 
 function initVersionCheck() {
   checkAppVersion();
@@ -224,11 +253,7 @@ function initVersionCheck() {
 }
 
 updateAppBtn.addEventListener("click", () => {
-  // Cambiar la URL del documento fuerza una navegación nueva incluso en modo
-  // PWA/home screen, sin depender del soporte obsoleto de reload(true).
-  const reloadUrl = new URL(window.location.href);
-  reloadUrl.searchParams.set("_app_version", availableAppVersion || String(Date.now()));
-  window.location.replace(reloadUrl.toString());
+  window.location.reload();
 });
 
 initVersionCheck();
@@ -463,7 +488,7 @@ function renderCart() {
 async function loadVales() {
   clearAppError();
   loadingEl.hidden = false;
-  if (refreshBtn) refreshBtn.disabled = true;
+  for (const btn of refreshButtons) btn.disabled = true;
 
   try {
     // Sin orderBy en la consulta: un orderBy("fecha") o ("fechaVale") EXCLUYE
@@ -493,7 +518,7 @@ async function loadVales() {
         "Pulsa «Actualizar» para reintentar."
     );
   } finally {
-    if (refreshBtn) refreshBtn.disabled = false;
+    for (const btn of refreshButtons) btn.disabled = false;
   }
 }
 
@@ -510,8 +535,10 @@ function withTimeout(promise, ms) {
   ]);
 }
 
-// Botón de recarga manual.
-if (refreshBtn) refreshBtn.addEventListener("click", loadVales);
+// Botones de recarga manual (Historial y Dashboard). loadVales() vuelve a
+// pintar historial, dashboard y admin, así que ambos respetan los filtros y el
+// mes que estén seleccionados en ese momento.
+for (const btn of refreshButtons) btn.addEventListener("click", loadVales);
 
 // --- Enviar: validar → mostrar confirmación --------------------------------
 valeForm.addEventListener("submit", async (e) => {
