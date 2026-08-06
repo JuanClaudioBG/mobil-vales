@@ -5,8 +5,18 @@
   --border: #303845;
   --text: #e7ecf3;
   --muted: #97a1b0;
-  --accent: #f5a623;
-  --accent-ink: #1a1f27;
+  /* Rojo Mobil. Se usa para RELLENOS, bordes y estados activos. Sobre fondo
+     oscuro sólo alcanza 4.3:1, por debajo del mínimo AA para texto pequeño, así
+     que el texto de acento usa --accent-text (más claro) en lugar de éste. */
+  --accent: #ed1c24;
+  --accent-ink: #ffffff; /* texto SOBRE el rojo (blanco: 4.4:1 sobre #ed1c24) */
+  --accent-text: #ff5a60; /* rojo de TEXTO sobre fondo oscuro (>=4.7:1 AA) */
+  /* Azul Mobil. Muy oscuro: sólo sirve como relleno con texto blanco encima
+     (10.6:1); sobre el fondo oscuro no se distingue, así que no se usa para
+     texto ni bordes. */
+  --accent-2: #0033a0;
+  /* Rojo de error/anulado. Deliberadamente más apagado y claro que el rojo de
+     marca para que "vencido"/"anulado" no se confundan con un estado normal. */
   --danger: #ef5350;
   --empleado: #3d8bfd;
   --familia: #26a269;
@@ -98,7 +108,7 @@ select:focus {
 }
 
 /* --- Aviso de nueva versión ---------------------------------------- */
-/* Barra roja Spectro pegada al borde superior, por encima de la topbar.
+/* Barra roja de marca pegada al borde superior, por encima de la topbar.
    Entra deslizándose (translateY) en lugar de aparecer de golpe; el hueco que
    ocupa se abre con una transición sobre el padding del <body>, así el
    contenido baja de forma suave en vez de dar un salto. */
@@ -114,8 +124,8 @@ select:focus {
   flex-wrap: wrap;
   gap: 0.6rem;
   padding: calc(env(safe-area-inset-top, 0px) + 0.6rem) 0.9rem 0.6rem;
-  background: #e31e24;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
   font-size: 0.92rem;
   font-weight: 600;
@@ -207,7 +217,7 @@ body.has-update {
   font-size: 0.95rem;
 }
 .total-monto strong {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 1.1rem;
 }
 
@@ -439,8 +449,8 @@ tr.row-anulada td {
 }
 .denom-btn.selected {
   border-color: var(--accent);
-  background: rgba(245, 166, 35, 0.15);
-  color: var(--accent);
+  background: rgba(237, 28, 36, 0.15);
+  color: var(--accent-text);
 }
 .denom-badge:not(:empty) {
   position: absolute;
@@ -485,7 +495,7 @@ tr.row-anulada td {
   padding-top: 0.6rem;
 }
 .carrito-total-wrap strong {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 1.1rem;
 }
 .carrito-count {
@@ -508,9 +518,9 @@ tr.row-anulada td {
   padding: 0.5rem;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
-/* Estado activo: resalta toda la fila en ámbar */
+/* Estado activo: resalta toda la fila en rojo */
 .fecha-field.active {
-  background: #2a2000;
+  background: #2a0b0d;
   border-color: var(--accent);
 }
 
@@ -528,7 +538,7 @@ tr.row-anulada td {
   transition: color 0.15s ease;
 }
 .fecha-field.active .switch-label {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -591,11 +601,13 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 input[type="date"]::-webkit-calendar-picker-indicator:hover,
 input[type="month"]::-webkit-calendar-picker-indicator:hover {
   opacity: 1;
-  background: rgba(245, 166, 35, 0.25);
+  background: rgba(237, 28, 36, 0.25);
 }
-/* En el campo de fecha activo (ámbar), tíntalo de acento para que resalte */
+/* En el campo de fecha activo, tiñe el ícono de rojo para que resalte */
 .fecha-field.active input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(72%) sepia(60%) saturate(700%) hue-rotate(350deg) brightness(102%);
+  /* Cadena de filtros que tiñe el ícono (negro de origen) de rojo: da
+     rgb(255, 96, 72), 6.3:1 sobre el fondo oscuro. */
+  filter: invert(52%) sepia(72%) saturate(3000%) hue-rotate(332deg) brightness(101%);
   opacity: 1;
 }
 
@@ -668,22 +680,22 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   gap: 0.4rem;
 }
 
-/* --- Modal de QR del vale (acento rojo Spectro) -------------------- */
+/* --- Modal de QR del vale (acento rojo de marca) ------------------- */
 .qr-modal {
   z-index: 200; /* por encima de cualquier otro modal/toast */
 }
 .qr-card {
   width: min(360px, 100%);
   text-align: center;
-  border-color: #e31e24;
+  border-color: var(--accent);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
 .qr-progress {
   display: inline-block;
   font-size: 0.78rem;
   font-weight: 700;
-  color: #e31e24;
-  border: 1px solid #e31e24;
+  color: var(--accent-text);
+  border: 1px solid var(--accent);
   border-radius: 999px;
   padding: 0.15rem 0.7rem;
   margin-bottom: 0.7rem;
@@ -770,8 +782,8 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   max-width: 200px;
 }
 #qr-next {
-  background: #e31e24;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 @media (max-width: 768px) {
@@ -898,8 +910,8 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   font-size: 0.92rem;
 }
 .suggestions li:hover {
-  background: rgba(245, 166, 35, 0.15);
-  color: var(--accent);
+  background: rgba(237, 28, 36, 0.15);
+  color: var(--accent-text);
 }
 
 /* --- Filtros del historial ------------------------------------------ */
@@ -942,7 +954,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   font-size: 0.95rem;
 }
 .historial-total strong {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 1.05rem;
 }
 
@@ -1001,7 +1013,7 @@ tr.row-socio td {
 }
 .stat-card strong {
   font-size: 1.35rem;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .stat-value-row {
   display: flex;
@@ -1039,7 +1051,7 @@ tr.row-socio td {
   gap: 0.8rem;
 }
 .top-list strong {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .muted {
   color: var(--muted);
@@ -1066,7 +1078,7 @@ tr.row-socio td {
 .link-btn {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 0.85rem;
   font-weight: 600;
   padding: 0.2rem 0.3rem;
@@ -1088,7 +1100,7 @@ tr.row-socio td {
   border-radius: 8px;
 }
 .lb-row--first {
-  background: rgba(245, 166, 35, 0.1);
+  background: rgba(237, 28, 36, 0.1);
 }
 .lb-rank {
   width: 1.2rem;
@@ -1487,9 +1499,9 @@ tr.row-socio td {
   margin: 0 0 0.8rem;
   padding: 0.6rem 0.9rem;
   border-radius: 10px;
-  background: rgba(245, 166, 35, 0.12);
-  border: 1px solid rgba(245, 166, 35, 0.35);
-  color: var(--accent);
+  background: rgba(237, 28, 36, 0.12);
+  border: 1px solid rgba(237, 28, 36, 0.35);
+  color: var(--accent-text);
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -1530,7 +1542,7 @@ tr.row-socio td {
   font-size: 0.95rem;
 }
 .inv-totales strong {
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 1.05rem;
 }
 .inv-ultima {
@@ -1554,8 +1566,11 @@ tr.row-socio td {
   background: #c66a00;
   color: #fff8eb;
 }
+/* "Asignado" usa el azul Mobil, no el rojo de marca: en esta columna ya
+   conviven "canjeado" (#b04a4a) y "vencido" (--danger), así que un tercer rojo
+   haría indistinguibles los estados. El azul, además, lee como informativo. */
 .badge--asignado {
-  background: var(--accent);
+  background: var(--accent-2);
   color: var(--accent-ink);
 }
 .badge--canjeado {
@@ -1571,7 +1586,7 @@ tr.inv-row--revision_requerida td {
   background: rgba(198, 106, 0, 0.14);
 }
 tr.inv-row--asignado td {
-  background: rgba(245, 166, 35, 0.1);
+  background: rgba(0, 51, 160, 0.28); /* a juego con .badge--asignado */
 }
 tr.inv-row--canjeado td {
   background: rgba(176, 74, 74, 0.12);
