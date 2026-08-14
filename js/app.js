@@ -198,6 +198,15 @@ function clearAppError() {
 // hasta que el usuario termina; entonces recarga sin preguntar.
 const VERSION_POLL_MS = 60_000;
 const SAFETY_POLL_MS = 2_000;
+// Chrome (y otros) frenan los setInterval de las pestañas en segundo plano, y
+// en pestañas muy longevas el sondeo puede espaciarse mucho más de 60 s. Si al
+// volver a la pestaña han pasado más de 90 s desde la última comprobación
+// correcta Y la pestaña llevaba visible todo ese rato, es que el temporizador
+// se atascó: se avisa por consola para poder depurarlo.
+const VERSION_STALE_MS = 90_000;
+// visibilitychange y focus suelen dispararse juntos al cambiar de pestaña;
+// dentro de esta ventana se funden en una sola comprobación.
+const VERSION_COALESCE_MS = 2_000;
 // Margen mínimo entre recargas automáticas. Si version.json se sirviera de
 // forma inconsistente (p. ej. una CDN a medio propagar que alterna entre la
 // versión vieja y la nueva), sin este tope la app podría entrar en un ciclo de
@@ -214,7 +223,18 @@ let updatePendiente = false; // ya se detectó una versión nueva sin aplicar
 let updateBannerVisible = false;
 let safetyTimer = null;
 
+// Vigilancia del sondeo (ver VERSION_STALE_MS).
+let ultimaComprobacionOk = 0; // marca de la última lectura correcta
+let ultimoIntento = 0; // marca del último intento (para fundir eventos)
+let comprobando = false; // hay un fetch en vuelo
+let visibleDesde = document.hidden ? 0 : Date.now(); // visible de forma continua
+
 async function checkAppVersion() {
+  // Un solo fetch a la vez: al volver a la pestaña pueden llegar varios
+  // disparadores casi simultáneos.
+  if (comprobando) return;
+  comprobando = true;
+  ultimoIntento = Date.now();
   try {
     // El parámetro único evita además que una CDN intermedia entregue una
     // copia anterior aunque el navegador respete `cache: "no-store"`.
@@ -227,6 +247,9 @@ async function checkAppVersion() {
     const version = String(data.version || "").trim();
     if (!version) return;
 
+    // Lectura correcta: reinicia el reloj de la vigilancia.
+    ultimaComprobacionOk = Date.now();
+
     if (knownAppVersion === null) {
       knownAppVersion = version; // primera lectura: la versión de esta sesión
     } else if (version !== knownAppVersion) {
@@ -235,7 +258,35 @@ async function checkAppVersion() {
   } catch (err) {
     // Un fallo de red no afecta el uso normal; el siguiente sondeo reintenta.
     console.warn("[version] No se pudo comprobar la versión:", err);
+  } finally {
+    comprobando = false;
   }
+}
+
+// Avisa si el sondeo se quedó atascado con la pestaña a la vista. Sólo es
+// sospechoso cuando la pestaña llevaba visible más de VERSION_STALE_MS: si
+// estuvo en segundo plano, el hueco es normal y esperado.
+function avisarSiSondeoEstancado(origen) {
+  if (document.hidden || !ultimaComprobacionOk || !visibleDesde) return;
+  const hueco = Date.now() - ultimaComprobacionOk;
+  const visibleDesdeHace = Date.now() - visibleDesde;
+  if (hueco <= VERSION_STALE_MS || visibleDesdeHace <= VERSION_STALE_MS) return;
+  console.warn(
+    `[version] Sondeo estancado: ${Math.round(hueco / 1000)} s sin comprobar ` +
+      `con la pestaña visible (se esperaba cada ${VERSION_POLL_MS / 1000} s; ` +
+      `origen "${origen}"). Probable limitación de temporizadores del navegador. ` +
+      `Recomprobando ahora.`
+  );
+}
+
+// Punto de entrada único de todos los disparadores.
+function comprobarVersion(origen) {
+  if (origen !== "interval") {
+    // Funde visibilitychange + focus del mismo cambio de pestaña.
+    if (Date.now() - ultimoIntento < VERSION_COALESCE_MS) return;
+  }
+  avisarSiSondeoEstancado(origen);
+  checkAppVersion();
 }
 
 // ¿Se puede recargar ahora mismo sin que el usuario pierda nada?
@@ -318,9 +369,25 @@ window.addEventListener("resize", syncUpdateBannerHeight);
 
 function initVersionCheck() {
   checkAppVersion();
-  window.setInterval(checkAppVersion, VERSION_POLL_MS);
+
+  // 1) Sondeo periódico. Es el que el navegador puede frenar.
+  window.setInterval(() => comprobarVersion("interval"), VERSION_POLL_MS);
+
+  // 2) Al volver a la pestaña: comprueba ya, sin esperar al temporizador.
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) checkAppVersion();
+    if (document.hidden) {
+      visibleDesde = 0; // el hueco a partir de aquí es esperado
+      return;
+    }
+    visibleDesde = Date.now();
+    comprobarVersion("visibilitychange");
+  });
+
+  // 3) Algunos navegadores disparan focus sin visibilitychange (cambio de
+  //    ventana, salir de otra app), así que se cubre también.
+  window.addEventListener("focus", () => {
+    if (!visibleDesde && !document.hidden) visibleDesde = Date.now();
+    comprobarVersion("focus");
   });
 }
 
