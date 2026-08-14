@@ -40,11 +40,18 @@ export const INVENTARIO_COLLECTION = "inventario";
 
 // Opciones permitidas (deben coincidir con firestore.rules).
 export const CATEGORIAS = ["Empleado", "Familia", "Socio"];
-export const MONTOS = [200, 300, 500, 1000, 4000];
 
-// Denominaciones que surte Combusa en el PDF de vales físicos. Sólo estas se
-// toman del inventario; el resto (p. ej. $4,000) sigue con el QR generado por
-// la app.
+// Denominaciones que se OFRECEN en el formulario (los botones de monto).
+// Es a propósito un SUBCONJUNTO de lo que aceptan las reglas: firestore.rules
+// sigue admitiendo 4000 porque hay vales históricos guardados con ese monto y
+// `hasValidCommonFields()` revalida `monto` también al actualizar —quitarlo de
+// las reglas impediría anularlos. Combusa sólo surte 200/300/500/1000.
+export const MONTOS = [200, 300, 500, 1000];
+
+// Denominaciones que surte Combusa en el PDF de vales físicos. Hoy coincide
+// con MONTOS: todo lo que puede registrarse sale del inventario. Si algún día
+// se ofrece una denominación fuera de esta lista, esa seguiría usando el QR
+// generado por la app en vez de un folio real.
 export const INVENTARIO_MONTOS = [200, 300, 500, 1000];
 
 // Estados posibles de un vale del inventario (deben coincidir con las reglas).

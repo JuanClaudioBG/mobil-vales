@@ -132,6 +132,10 @@ service cloud.firestore {
                ['nombre', 'categoria', 'monto', 'registradoPor']) &&
              isValidString('nombre', 1, 100) &&
              (request.resource.data.categoria in ['Empleado', 'Familia', 'Socio']) &&
+             // NO quitar 4000: la interfaz ya no lo ofrece (ver MONTOS en
+             // config.js), pero hay vales históricos con ese monto y esta
+             // función también valida los UPDATE, así que sin 4000 dejarían de
+             // poder anularse.
              (request.resource.data.monto in [200, 300, 500, 1000, 4000]) &&
              isValidString('registradoPor', 1, 100) &&
              isValidOptionalNotas() &&
