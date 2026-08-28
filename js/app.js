@@ -1728,7 +1728,31 @@ const XLS_ROJO_BORDE = "FFBF3030";
 const XLS_BLANCO = "FFFFFFFF";
 const XLS_GRIS = "FFF4F4F4";
 const XLS_MONEDA = '"$"#,##0';
+const XLS_BORDE = "FFD0D0D0";        // retícula gris clara
+const XLS_BORDE_TOTAL = "FFA0A0A0";  // línea gruesa sobre la fila TOTAL
+const XLS_TOTAL_BG = "FFF0F0F0";
+// Tintes por categoría: los mismos códigos que usa la app, aclarados para que
+// el texto negro siga leyéndose sin problema sobre ellos.
+const XLS_CATEGORIA = {
+  Empleado: "FFE3F2FD", // azul claro
+  Familia: "FFE8F5E9",  // verde claro
+  Socio: "FFEDE7F6",    // morado claro
+};
 const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+/* Descripción de las columnas de cada tipo de hoja: alineación, si llevan
+   formato de moneda, si se suman en la fila TOTAL y cuál trae la categoría. */
+const COLS_HISTORICO = [
+  { titulo: "Nombre", align: "left" },
+  { titulo: "Vales", align: "center", suma: true },
+  { titulo: "Total", align: "right", moneda: true, suma: true },
+];
+const COLS_MES = [
+  { titulo: "Nombre", align: "left" },
+  { titulo: "Categoría", align: "left", categoria: true },
+  { titulo: "Vales", align: "center", suma: true },
+  { titulo: "Total", align: "right", moneda: true, suma: true },
+];
 
 // Vales activos agrupados por mes local (misma regla que el dashboard),
 // del mes más reciente al más antiguo.
@@ -1767,46 +1791,91 @@ function filasDelMes(vales) {
 /* Formato común de cada hoja. `monedaCols` son los índices (1-based) de las
    columnas de dinero. Todo se aplica por celda: fijar estilos a nivel de
    columna pisaría el formato de la cabecera. */
-function formatearHoja(ws, monedaCols) {
+function bordeGris(extra) {
+  const linea = { style: "thin", color: { argb: XLS_BORDE } };
+  return Object.assign({ top: linea, left: linea, bottom: linea, right: linea }, extra || {});
+}
+
+/* Añade la fila TOTAL al final de la hoja sumando las columnas marcadas. */
+function agregarFilaTotal(ws, cols) {
+  const primera = 2;
+  const ultima = ws.rowCount;
+  const valores = cols.map((col, i) => {
+    if (i === 0) return "TOTAL";
+    if (!col.suma) return "";
+    let acc = 0;
+    for (let r = primera; r <= ultima; r++) acc += Number(ws.getRow(r).getCell(i + 1).value) || 0;
+    return acc;
+  });
+  ws.addRow(valores);
+}
+
+/* Formato completo de una hoja: retícula, cabecera roja, tinte por categoría
+   (o sombreado alterno si la hoja no tiene esa columna), moneda, alineación,
+   alto de fila, fila TOTAL destacada y anchos automáticos. */
+function formatearHoja(ws, cols) {
   ws.views = [{ state: "frozen", ySplit: 1 }]; // cabecera siempre visible
 
-  for (let r = 1; r <= ws.rowCount; r++) {
+  const filaTotal = ws.rowCount;                       // la última fila es TOTAL
+  const colCategoria = cols.findIndex((c) => c.categoria) + 1; // 0 si no la hay
+
+  for (let r = 1; r <= filaTotal; r++) {
     const fila = ws.getRow(r);
-    fila.eachCell({ includeEmpty: true }, (celda, col) => {
-      const esMoneda = monedaCols.indexOf(col) !== -1;
-      if (r === 1) {
+    const esCabecera = r === 1;
+    const esTotal = r === filaTotal;
+
+    // Color de fondo de la fila de datos: por categoría si la hoja la trae;
+    // si no (Histórico), se conserva el sombreado alterno.
+    let fondo = null;
+    if (!esCabecera && !esTotal) {
+      fondo = colCategoria
+        ? XLS_CATEGORIA[String(fila.getCell(colCategoria).value || "").trim()] || null
+        : r % 2 === 1 ? XLS_GRIS : null;
+    }
+
+    // Se recorren los índices de columna, no las celdas existentes: así la
+    // retícula cubre también las celdas vacías del rango.
+    for (let c = 1; c <= cols.length; c++) {
+      const col = cols[c - 1];
+      const celda = fila.getCell(c);
+
+      celda.border = bordeGris(
+        esCabecera
+          ? { bottom: { style: "thin", color: { argb: XLS_ROJO_BORDE } } }
+          : esTotal
+            ? { top: { style: "medium", color: { argb: XLS_BORDE_TOTAL } } }
+            : null
+      );
+      celda.alignment = { horizontal: col.align, vertical: "middle" };
+
+      if (esCabecera) {
         celda.font = { bold: true, color: { argb: XLS_BLANCO }, size: 11 };
         celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_ROJO } };
-        celda.alignment = { vertical: "middle", horizontal: esMoneda ? "right" : "left" };
-        celda.border = { bottom: { style: "thin", color: { argb: XLS_ROJO_BORDE } } };
       } else {
-        // Sombreado alterno: filas de datos impares (3, 5, 7…).
-        if (r % 2 === 1) {
-          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_GRIS } };
+        if (esTotal) {
+          celda.font = { bold: true };
+          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_TOTAL_BG } };
+        } else if (fondo) {
+          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fondo } };
         }
-        if (esMoneda) {
-          celda.numFmt = XLS_MONEDA;
-          celda.alignment = { horizontal: "right" };
-        }
+        if (col.moneda) celda.numFmt = XLS_MONEDA;
       }
-    });
-    if (r === 1) fila.height = 22;
+    }
+
+    fila.height = esCabecera ? 24 : 19; // algo más de aire que el alto por defecto
   }
 
   // Ancho por columna según su contenido más largo.
-  ws.columns.forEach((col, i) => {
+  for (let c = 1; c <= cols.length; c++) {
+    const col = cols[c - 1];
     let ancho = 10;
-    col.eachCell({ includeEmpty: false }, (celda) => {
-      const v = celda.value;
-      const texto = v == null
-        ? ""
-        : typeof v === "number" && monedaCols.indexOf(i + 1) !== -1
-          ? money(v)
-          : String(v);
+    for (let r = 1; r <= filaTotal; r++) {
+      const v = ws.getRow(r).getCell(c).value;
+      const texto = v == null ? "" : typeof v === "number" && col.moneda ? money(v) : String(v);
       ancho = Math.max(ancho, texto.length + 3);
-    });
-    col.width = Math.min(ancho, 42);
-  });
+    }
+    ws.getColumn(c).width = Math.min(ancho, 42);
+  }
 }
 
 async function exportExcel() {
@@ -1821,16 +1890,18 @@ async function exportExcel() {
 
     // --- Hoja 1: Histórico (idéntico al CSV anterior) ---
     const hoja = wb.addWorksheet("Histórico");
-    hoja.addRow(["Nombre", "Vales", "Total"]);
+    hoja.addRow(COLS_HISTORICO.map((c) => c.titulo));
     for (const r of adminRows()) hoja.addRow([r.nombre, r.count, r.total]);
-    formatearHoja(hoja, [3]);
+    agregarFilaTotal(hoja, COLS_HISTORICO);
+    formatearHoja(hoja, COLS_HISTORICO);
 
     // --- Una hoja por mes con vales, la más reciente primero ---
     for (const [clave, vales] of valesPorMes()) {
       const hm = wb.addWorksheet(nombreHojaMes(clave));
-      hm.addRow(["Nombre", "Categoría", "Vales", "Total"]);
+      hm.addRow(COLS_MES.map((c) => c.titulo));
       for (const r of filasDelMes(vales)) hm.addRow([r.nombre, r.categoria, r.count, r.total]);
-      formatearHoja(hm, [4]);
+      agregarFilaTotal(hm, COLS_MES);
+      formatearHoja(hm, COLS_MES);
     }
 
     const buffer = await wb.xlsx.writeBuffer();
