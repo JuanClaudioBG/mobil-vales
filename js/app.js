@@ -153,7 +153,7 @@ const dashVerTodos = $("#dash-vertodos");
 // Admin
 const adminBody = $("#admin-body");
 const adminEmpty = $("#admin-empty");
-const btnCsv = $("#btn-csv");
+const btnExcel = $("#btn-excel");
 const adminValesBody = $("#admin-vales-body");
 const adminValesEmpty = $("#admin-vales-empty");
 
@@ -1632,9 +1632,9 @@ function drawStackedBarChart(canvas, meses, matrix, personas) {
 }
 
 // ===========================================================================
-//  Admin (histórico por persona + exportar CSV)
+//  Admin (histórico por persona + exportar Excel)
 // ===========================================================================
-btnCsv.addEventListener("click", exportCsv);
+btnExcel.addEventListener("click", exportExcel);
 
 function adminRows() {
   // Resumen histórico por persona, sin contar vales anulados.
@@ -1689,26 +1689,163 @@ function renderAdmin() {
   }
 }
 
-function exportCsv() {
-  const rows = adminRows();
-  const lines = [["Nombre", "Vales", "Total"]];
-  for (const r of rows) lines.push([r.nombre, String(r.count), String(r.total)]);
-  const csv = lines
-    .map((cols) => cols.map(csvCell).join(","))
-    .join("\r\n");
-  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `vales-por-persona-${currentMonthKey()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+/* ===========================================================================
+   Exportación a Excel (.xlsx)
+   ===========================================================================
+   Libro con varias hojas: "Histórico" (mismos datos que el CSV anterior) y una
+   hoja por cada mes con vales, de la más reciente a la más antigua.
+
+   Se usa ExcelJS y no SheetJS: la edición gratuita de SheetJS no escribe
+   estilos de celda (colores, negritas) ni inmoviliza paneles —lo comprobamos
+   generando un libro y leyendo su styles.xml—, y aquí hacen falta las dos
+   cosas. ExcelJS las trae de serie y además pesa menos que xlsx.full.min.js.
+
+   La librería se descarga BAJO DEMANDA al pulsar el botón: son ~930 KB que no
+   tienen por qué penalizar cada carga de la app en el celular. */
+const EXCELJS_CDN = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
+let excelJsPromise = null;
+
+function cargarExcelJs() {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  if (excelJsPromise) return excelJsPromise;
+  excelJsPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = EXCELJS_CDN;
+    script.onload = () =>
+      window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error("ExcelJS no se registró"));
+    script.onerror = () => {
+      excelJsPromise = null; // permite reintentar en el siguiente clic
+      reject(new Error("No se pudo descargar la librería de Excel"));
+    };
+    document.head.appendChild(script);
+  });
+  return excelJsPromise;
 }
-function csvCell(value) {
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+
+// Colores de marca en ARGB (el formato que espera ExcelJS).
+const XLS_ROJO = "FFED1C24";
+const XLS_ROJO_BORDE = "FFBF3030";
+const XLS_BLANCO = "FFFFFFFF";
+const XLS_GRIS = "FFF4F4F4";
+const XLS_MONEDA = '"$"#,##0';
+const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+// Vales activos agrupados por mes local (misma regla que el dashboard),
+// del mes más reciente al más antiguo.
+function valesPorMes() {
+  const porMes = new Map();
+  for (const v of activos(allVales)) {
+    const fecha = valeDate(v);
+    if (!fecha) continue;
+    const clave = monthKey(fecha);
+    if (!porMes.has(clave)) porMes.set(clave, []);
+    porMes.get(clave).push(v);
+  }
+  return [...porMes.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+}
+
+// "2026-08" -> "Ago 2026"
+function nombreHojaMes(clave) {
+  const [anio, mes] = clave.split("-").map(Number);
+  return MESES_CORTOS[mes - 1] + " " + anio;
+}
+
+// Resumen por persona dentro de un mes, de mayor a menor gasto.
+function filasDelMes(vales) {
+  const porPersona = new Map();
+  for (const v of vales) {
+    const agg = porPersona.get(v.nombre) ||
+      { nombre: v.nombre, categoria: v.categoria || "", count: 0, total: 0 };
+    agg.count += 1;
+    agg.total += Number(v.monto) || 0;
+    if (!agg.categoria && v.categoria) agg.categoria = v.categoria;
+    porPersona.set(v.nombre, agg);
+  }
+  return [...porPersona.values()].sort((a, b) => b.total - a.total);
+}
+
+/* Formato común de cada hoja. `monedaCols` son los índices (1-based) de las
+   columnas de dinero. Todo se aplica por celda: fijar estilos a nivel de
+   columna pisaría el formato de la cabecera. */
+function formatearHoja(ws, monedaCols) {
+  ws.views = [{ state: "frozen", ySplit: 1 }]; // cabecera siempre visible
+
+  for (let r = 1; r <= ws.rowCount; r++) {
+    const fila = ws.getRow(r);
+    fila.eachCell({ includeEmpty: true }, (celda, col) => {
+      const esMoneda = monedaCols.indexOf(col) !== -1;
+      if (r === 1) {
+        celda.font = { bold: true, color: { argb: XLS_BLANCO }, size: 11 };
+        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_ROJO } };
+        celda.alignment = { vertical: "middle", horizontal: esMoneda ? "right" : "left" };
+        celda.border = { bottom: { style: "thin", color: { argb: XLS_ROJO_BORDE } } };
+      } else {
+        // Sombreado alterno: filas de datos impares (3, 5, 7…).
+        if (r % 2 === 1) {
+          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_GRIS } };
+        }
+        if (esMoneda) {
+          celda.numFmt = XLS_MONEDA;
+          celda.alignment = { horizontal: "right" };
+        }
+      }
+    });
+    if (r === 1) fila.height = 22;
+  }
+
+  // Ancho por columna según su contenido más largo.
+  ws.columns.forEach((col, i) => {
+    let ancho = 10;
+    col.eachCell({ includeEmpty: false }, (celda) => {
+      const v = celda.value;
+      const texto = v == null
+        ? ""
+        : typeof v === "number" && monedaCols.indexOf(i + 1) !== -1
+          ? money(v)
+          : String(v);
+      ancho = Math.max(ancho, texto.length + 3);
+    });
+    col.width = Math.min(ancho, 42);
+  });
+}
+
+async function exportExcel() {
+  const etiqueta = btnExcel.textContent;
+  btnExcel.disabled = true;
+  btnExcel.textContent = "Generando…";
+  try {
+    const ExcelJS = await cargarExcelJs();
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Spectro Networks — Vales";
+    wb.created = new Date();
+
+    // --- Hoja 1: Histórico (idéntico al CSV anterior) ---
+    const hoja = wb.addWorksheet("Histórico");
+    hoja.addRow(["Nombre", "Vales", "Total"]);
+    for (const r of adminRows()) hoja.addRow([r.nombre, r.count, r.total]);
+    formatearHoja(hoja, [3]);
+
+    // --- Una hoja por mes con vales, la más reciente primero ---
+    for (const [clave, vales] of valesPorMes()) {
+      const hm = wb.addWorksheet(nombreHojaMes(clave));
+      hm.addRow(["Nombre", "Categoría", "Vales", "Total"]);
+      for (const r of filasDelMes(vales)) hm.addRow([r.nombre, r.categoria, r.count, r.total]);
+      formatearHoja(hm, [4]);
+    }
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    downloadBlob(blob, `vales-spectro-${todayInput()}.xlsx`);
+    showToast("✅ Excel generado");
+  } catch (err) {
+    console.error("Error al exportar a Excel:", err);
+    showToast("⚠️ No se pudo generar el Excel: " + err.message);
+  } finally {
+    btnExcel.disabled = false;
+    btnExcel.textContent = etiqueta;
+  }
 }
 
 // ===========================================================================
