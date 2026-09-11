@@ -299,6 +299,40 @@ export async function existeFolio(folio) {
   }
 }
 
+// Caché en memoria del QR de los folios que se han vuelto a consultar desde el
+// historial. El base64 es inmutable (las reglas no dejan reescribirlo), así que
+// basta con leerlo una vez por sesión.
+const qrImagenCache = new Map();
+
+// Imagen del QR (base64) de un folio YA EMITIDO, para volver a mostrar un vale
+// desde el historial. Es SÓLO LECTURA: no toca el status ni ningún otro campo
+// del inventario, y nunca reasigna ni devuelve el folio.
+// Devuelve:
+//   { ok: true, imagen }       imagen puede ser null si el documento no la trae
+//   { ok: false, motivo: "no-existe" }  el folio ya no está en el inventario
+//   { ok: false, motivo: "error" }      no se pudo leer (red/permisos). NO
+//                                       significa que el vale no exista.
+export async function qrImagenDeFolio(folio) {
+  const key = String(folio);
+  if (qrImagenCache.has(key)) return qrImagenCache.get(key);
+
+  let resultado;
+  try {
+    const snap = await getDoc(inventarioDocRef(key));
+    resultado = snap.exists()
+      ? { ok: true, imagen: snap.data().qrImageBase64 || null }
+      : { ok: false, motivo: "no-existe" };
+  } catch (err) {
+    console.error("[inventario] no se pudo leer el QR del folio", key, err);
+    // Un fallo de lectura puede ser temporal: no se cachea, para que el
+    // siguiente intento vuelva a preguntar.
+    return { ok: false, motivo: "error" };
+  }
+
+  qrImagenCache.set(key, resultado);
+  return resultado;
+}
+
 // Recarga el inventario tras devolver un folio (pool + tabla de la pestaña).
 export async function refrescarInventario() {
   todosCargados = false;

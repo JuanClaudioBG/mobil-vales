@@ -36,6 +36,7 @@ import {
   camposAsignacion,
   camposDevolucion,
   existeFolio,
+  qrImagenDeFolio,
   refrescarInventario,
   marcarAsignadosLocal,
   formatFolio,
@@ -116,6 +117,9 @@ const qrFecha = $("#qr-fecha");
 const qrCanvas = $("#qr-canvas");
 const qrCodeText = $("#qr-code");
 const qrVence = $("#qr-vence");
+const qrAnulado = $("#qr-anulado");
+const qrHint = $("#qr-hint");
+const qrShareActions = $("#qr-share-actions");
 const qrDownload = $("#qr-download");
 const qrShare = $("#qr-share");
 const qrDone = $("#qr-done");
@@ -973,11 +977,15 @@ async function renderQrVale() {
   qrNombre.textContent = v.nombre;
   qrCategoria.textContent = v.categoria;
   qrMonto.textContent = money(v.monto);
-  const fechaTxt = parseDateInput(v.fechaStr).toLocaleDateString("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  // Los vales reabiertos derivan la fecha de lo guardado; si un vale muy
+  // antiguo no tuviera ninguna fecha utilizable, se muestra un guion.
+  const fechaTxt = v.fechaStr
+    ? parseDateInput(v.fechaStr).toLocaleDateString("es-MX", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })
+    : "—";
   qrFecha.textContent = fechaTxt;
   // Con folio real se muestra el folio de Combusa (destacado: es EL dato que
   // pide la gasolinera); si no, el código generado por la app, más discreto.
@@ -994,6 +1002,15 @@ async function renderQrVale() {
       });
   }
 
+  // Vale ANULADO (sólo se llega aquí reabriéndolo desde el historial): el
+  // modal queda en modo CONSULTA. Sin descargar ni compartir, porque el folio
+  // pudo volver al inventario y estar ya reasignado a otra persona: esa imagen
+  // no debe volver a circular como si el vale siguiera siendo válido.
+  const anulado = !!v.anulado;
+  qrAnulado.hidden = !anulado;
+  qrShareActions.hidden = anulado;
+  qrHint.hidden = anulado;
+
   // Oculta la confirmación "✅ Listo" al cambiar de vale.
   hideQrDone();
 
@@ -1002,6 +1019,7 @@ async function renderQrVale() {
 
   // Descargar: exporta el QR como PNG (fondo blanco, sin transparencia).
   qrDownload.onclick = () => {
+    if (anulado) return; // vale anulado: sólo consulta
     const blob = qrToPngBlob();
     if (!blob) return;
     downloadBlob(blob, qrFileName(v));
@@ -1010,6 +1028,7 @@ async function renderQrVale() {
 
   // Compartir: Web Share API con el archivo PNG; si no está disponible, descarga.
   qrShare.onclick = async () => {
+    if (anulado) return; // vale anulado: sólo consulta
     const blob = qrToPngBlob();
     if (!blob) return;
     const fileName = qrFileName(v);
@@ -1052,6 +1071,12 @@ async function renderQrVale() {
     // Se dibuja en un <canvas> (no en un <img>) para que "Descargar" y
     // "Compartir" sigan funcionando de forma síncrona, igual que antes.
     await drawQrImage(v.qrImageBase64, token);
+  } else if (v.folio) {
+    // Vale de Combusa reabierto cuyo QR no se pudo recuperar del inventario.
+    // NO se dibuja un QR generado a partir de "COMBUSA-{folio}": ese texto no
+    // es el payload que lee la gasolinera, así que sería un QR falso. Se
+    // muestra el motivo y el folio (que sigue siendo el original).
+    qrCanvas.textContent = v.avisoQr || "No se pudo mostrar el QR de este vale.";
   } else if (window.QRCode) {
     // Sin inventario para esta denominación: QR generado por la app, a 1024px
     // internos (PNG de alta calidad); el CSS lo muestra a min(80vw, 280px).
@@ -1207,6 +1232,124 @@ function uuid() {
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+// ===========================================================================
+//  Reabrir un vale YA EMITIDO (historial / admin)
+// ===========================================================================
+//  Si el usuario cierra el modal sin descargar ni compartir, el vale NO se ha
+//  perdido: sigue en Firestore con su código/folio. Esta sección lo vuelve a
+//  mostrar a partir de lo que hay guardado.
+//
+//  Es SÓLO LECTURA. No emite nada ni toca nada: no llama a makeQrCode(),
+//  tomarFolios(), writeBatch() ni a ninguna escritura de Firestore, así que el
+//  código, el folio, el estado del inventario y las fechas del vale quedan
+//  exactamente como estaban.
+// ===========================================================================
+
+// ¿Hay algo que volver a mostrar? Los vales anteriores al QR no guardaron ni
+// `qrCode` ni `folio`: de esos no se puede reconstruir nada.
+function sePuedeReabrir(v) {
+  return Boolean(v && (v.qrCode || v.folio));
+}
+
+// "YYYY-MM-DD" de la fecha del vale: es el formato que espera el modal.
+function fechaValeInputStr(v) {
+  const d = valeDate(v);
+  if (!d) return null;
+  return (
+    d.getFullYear() +
+    "-" +
+    String(d.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(d.getDate()).padStart(2, "0")
+  );
+}
+
+// Rehace el modelo que usa el modal a partir del vale guardado. El QR de un
+// vale con folio vive en `inventario/{folio}` (una lectura); el de un vale con
+// código generado se vuelve a dibujar a partir del propio `qrCode`, que es
+// determinista.
+async function valeParaModal(v) {
+  const modelo = {
+    nombre: v.nombre,
+    categoria: v.categoria,
+    monto: v.monto,
+    fechaStr: fechaValeInputStr(v),
+    qrCode: v.qrCode || (v.folio ? `COMBUSA-${v.folio}` : ""),
+    folio: v.folio || null,
+    vencimiento: v.vencimiento || null,
+    qrImageBase64: null,
+    anulado: !!v.anulado,
+    avisoQr: null,
+  };
+
+  if (modelo.folio) {
+    const res = await qrImagenDeFolio(modelo.folio);
+    if (res.ok && res.imagen) {
+      modelo.qrImageBase64 = res.imagen;
+    } else if (res.ok || res.motivo === "no-existe") {
+      // El vale existe y sus datos son los originales; lo que falta es la
+      // imagen del QR en el inventario.
+      modelo.avisoQr =
+        "Este vale existe, pero su QR ya no está en el inventario. " +
+        "Usa el folio que aparece abajo.";
+    } else {
+      // Fallo de lectura: NO es que el vale no exista.
+      modelo.avisoQr =
+        "No se pudo cargar el QR (revisa la conexión e inténtalo de nuevo). " +
+        "El folio de abajo es el original del vale.";
+    }
+  }
+
+  return modelo;
+}
+
+// Botón "Ver" de una fila: reabre ESE vale, sin crear ninguno nuevo.
+function botonVerVale(v) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn-ver";
+  btn.textContent = "Ver";
+  btn.title = v.anulado ? "Ver el vale anulado (sólo consulta)" : "Ver el vale";
+  btn.addEventListener("click", () => abrirValeExistente(v, btn));
+  return btn;
+}
+
+async function abrirValeExistente(v, btn) {
+  if (btn.disabled) return; // evita reabrirlo dos veces mientras carga el QR
+  btn.disabled = true;
+  try {
+    openQrModal([await valeParaModal(v)]);
+  } catch (err) {
+    console.error("[vales] no se pudo reabrir el vale:", err);
+    alert("No se pudo abrir el vale: " + (err && err.message ? err.message : err));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Celda de acciones de una fila (historial y admin). "Ver" va SIEMPRE antes de
+// "Anular": anular es la acción destructiva, no debe ser la única a mano.
+function celdaAcciones(v, { conAnular }) {
+  const td = document.createElement("td");
+  const wrap = document.createElement("div");
+  wrap.className = "acciones";
+
+  if (sePuedeReabrir(v)) wrap.appendChild(botonVerVale(v));
+
+  if (conAnular) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-anular";
+    btn.title = "Anular";
+    btn.textContent = "Anular";
+    btn.addEventListener("click", () => anularVale(v));
+    wrap.appendChild(btn);
+  }
+
+  td.appendChild(wrap);
+  return td;
 }
 
 // --- PIN de administrador (reutilizable para acciones sensibles) ------------
@@ -1400,14 +1543,7 @@ function renderHistorial() {
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
     `;
-    const acciones = document.createElement("td");
-    const btn = document.createElement("button");
-    btn.className = "btn-anular";
-    btn.title = "Anular";
-    btn.textContent = "Anular";
-    btn.addEventListener("click", () => anularVale(v));
-    acciones.appendChild(btn);
-    tr.appendChild(acciones);
+    tr.appendChild(celdaAcciones(v, { conAnular: true }));
     tbody.appendChild(tr);
   }
 
@@ -1675,16 +1811,9 @@ function renderAdmin() {
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="col-estado">${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
     `;
-    const acciones = document.createElement("td");
-    if (!anulado) {
-      const btn = document.createElement("button");
-      btn.className = "btn-anular";
-      btn.title = "Anular";
-      btn.textContent = "Anular";
-      btn.addEventListener("click", () => anularVale(v));
-      acciones.appendChild(btn);
-    }
-    tr.appendChild(acciones);
+    // Los vales anulados también se pueden VER (auditoría), pero el modal
+    // queda en modo consulta; anular ya no aplica.
+    tr.appendChild(celdaAcciones(v, { conAnular: !anulado }));
     adminValesBody.appendChild(tr);
   }
 }

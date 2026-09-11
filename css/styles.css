@@ -353,6 +353,29 @@ td.notas {
   border-color: var(--danger);
   filter: none;
 }
+/* "Ver": mismo tamaño que "Anular", pero neutro. Va primero en la celda para
+   que la acción destructiva deje de ser la única a mano. */
+.btn-ver {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.btn-ver:hover {
+  border-color: var(--accent);
+  filter: none;
+}
+.btn-ver:disabled {
+  opacity: 0.5;
+}
+.acciones {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
 
 /* Categoría automática (a partir de la persona seleccionada) */
 .cat-auto-wrap {
@@ -748,6 +771,17 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .qr-hint {
   margin: 0 0 1.2rem;
   font-size: 0.9rem;
+}
+/* Vale anulado reabierto desde el historial: el modal es sólo de consulta. */
+.qr-anulado {
+  margin: 0 0 0.6rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
 }
 /* Descargar / Compartir: lado a lado en escritorio, apilados en móvil. */
 .qr-share-actions {
@@ -1213,6 +1247,7 @@ tr.row-socio td {
     font-size: 1.15rem;
   }
   .btn-anular,
+  .btn-ver,
   .btn-eliminar {
     min-height: 40px;
     padding-inline: 0.7rem;
