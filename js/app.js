@@ -1821,190 +1821,25 @@ function renderAdmin() {
 /* ===========================================================================
    Exportación a Excel (.xlsx)
    ===========================================================================
-   Libro con varias hojas: "Histórico" (mismos datos que el CSV anterior) y una
-   hoja por cada mes con vales, de la más reciente a la más antigua.
+   La implementación (hojas, estilos, carga diferida de ExcelJS) vive en
+   js/excel-export.js. Aquí sólo se normalizan los vales y se maneja el botón. */
 
-   Se usa ExcelJS y no SheetJS: la edición gratuita de SheetJS no escribe
-   estilos de celda (colores, negritas) ni inmoviliza paneles —lo comprobamos
-   generando un libro y leyendo su styles.xml—, y aquí hacen falta las dos
-   cosas. ExcelJS las trae de serie y además pesa menos que xlsx.full.min.js.
-
-   La librería se descarga BAJO DEMANDA al pulsar el botón: son ~930 KB que no
-   tienen por qué penalizar cada carga de la app en el celular. */
-const EXCELJS_CDN = "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js";
-let excelJsPromise = null;
-
-function cargarExcelJs() {
-  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
-  if (excelJsPromise) return excelJsPromise;
-  excelJsPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = EXCELJS_CDN;
-    script.onload = () =>
-      window.ExcelJS ? resolve(window.ExcelJS) : reject(new Error("ExcelJS no se registró"));
-    script.onerror = () => {
-      excelJsPromise = null; // permite reintentar en el siguiente clic
-      reject(new Error("No se pudo descargar la librería de Excel"));
-    };
-    document.head.appendChild(script);
-  });
-  return excelJsPromise;
-}
-
-// Colores de marca en ARGB (el formato que espera ExcelJS).
-const XLS_ROJO = "FFED1C24";
-const XLS_ROJO_BORDE = "FFBF3030";
-const XLS_BLANCO = "FFFFFFFF";
-const XLS_GRIS = "FFF4F4F4";
-const XLS_MONEDA = '"$"#,##0';
-const XLS_BORDE = "FFD0D0D0";        // retícula gris clara
-const XLS_BORDE_TOTAL = "FFA0A0A0";  // línea gruesa sobre la fila TOTAL
-const XLS_TOTAL_BG = "FFF0F0F0";
-// Tintes por categoría: los mismos códigos que usa la app, aclarados para que
-// el texto negro siga leyéndose sin problema sobre ellos.
-const XLS_CATEGORIA = {
-  Empleado: "FFE3F2FD", // azul claro
-  Familia: "FFE8F5E9",  // verde claro
-  Socio: "FFEDE7F6",    // morado claro
-};
-const MESES_CORTOS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-
-/* Descripción de las columnas de cada tipo de hoja: alineación, si llevan
-   formato de moneda, si se suman en la fila TOTAL y cuál trae la categoría. */
-const COLS_HISTORICO = [
-  { titulo: "Nombre", align: "left" },
-  { titulo: "Vales", align: "center", suma: true },
-  { titulo: "Total", align: "right", moneda: true, suma: true },
-];
-const COLS_MES = [
-  { titulo: "Nombre", align: "left" },
-  { titulo: "Categoría", align: "left", categoria: true },
-  { titulo: "Vales", align: "center", suma: true },
-  { titulo: "Total", align: "right", moneda: true, suma: true },
-];
-
-// Vales activos agrupados por mes local (misma regla que el dashboard),
-// del mes más reciente al más antiguo.
-function valesPorMes() {
-  const porMes = new Map();
-  for (const v of activos(allVales)) {
-    const fecha = valeDate(v);
-    if (!fecha) continue;
-    const clave = monthKey(fecha);
-    if (!porMes.has(clave)) porMes.set(clave, []);
-    porMes.get(clave).push(v);
-  }
-  return [...porMes.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-}
-
-// "2026-08" -> "Ago 2026"
-function nombreHojaMes(clave) {
-  const [anio, mes] = clave.split("-").map(Number);
-  return MESES_CORTOS[mes - 1] + " " + anio;
-}
-
-// Resumen por persona dentro de un mes, de mayor a menor gasto.
-function filasDelMes(vales) {
-  const porPersona = new Map();
-  for (const v of vales) {
-    const agg = porPersona.get(v.nombre) ||
-      { nombre: v.nombre, categoria: v.categoria || "", count: 0, total: 0 };
-    agg.count += 1;
-    agg.total += Number(v.monto) || 0;
-    if (!agg.categoria && v.categoria) agg.categoria = v.categoria;
-    porPersona.set(v.nombre, agg);
-  }
-  return [...porPersona.values()].sort((a, b) => b.total - a.total);
-}
-
-/* Formato común de cada hoja. `monedaCols` son los índices (1-based) de las
-   columnas de dinero. Todo se aplica por celda: fijar estilos a nivel de
-   columna pisaría el formato de la cabecera. */
-function bordeGris(extra) {
-  const linea = { style: "thin", color: { argb: XLS_BORDE } };
-  return Object.assign({ top: linea, left: linea, bottom: linea, right: linea }, extra || {});
-}
-
-/* Añade la fila TOTAL al final de la hoja sumando las columnas marcadas. */
-function agregarFilaTotal(ws, cols) {
-  const primera = 2;
-  const ultima = ws.rowCount;
-  const valores = cols.map((col, i) => {
-    if (i === 0) return "TOTAL";
-    if (!col.suma) return "";
-    let acc = 0;
-    for (let r = primera; r <= ultima; r++) acc += Number(ws.getRow(r).getCell(i + 1).value) || 0;
-    return acc;
-  });
-  ws.addRow(valores);
-}
-
-/* Formato completo de una hoja: retícula, cabecera roja, tinte por categoría
-   (o sombreado alterno si la hoja no tiene esa columna), moneda, alineación,
-   alto de fila, fila TOTAL destacada y anchos automáticos. */
-function formatearHoja(ws, cols) {
-  ws.views = [{ state: "frozen", ySplit: 1 }]; // cabecera siempre visible
-
-  const filaTotal = ws.rowCount;                       // la última fila es TOTAL
-  const colCategoria = cols.findIndex((c) => c.categoria) + 1; // 0 si no la hay
-
-  for (let r = 1; r <= filaTotal; r++) {
-    const fila = ws.getRow(r);
-    const esCabecera = r === 1;
-    const esTotal = r === filaTotal;
-
-    // Color de fondo de la fila de datos: por categoría si la hoja la trae;
-    // si no (Histórico), se conserva el sombreado alterno.
-    let fondo = null;
-    if (!esCabecera && !esTotal) {
-      fondo = colCategoria
-        ? XLS_CATEGORIA[String(fila.getCell(colCategoria).value || "").trim()] || null
-        : r % 2 === 1 ? XLS_GRIS : null;
-    }
-
-    // Se recorren los índices de columna, no las celdas existentes: así la
-    // retícula cubre también las celdas vacías del rango.
-    for (let c = 1; c <= cols.length; c++) {
-      const col = cols[c - 1];
-      const celda = fila.getCell(c);
-
-      celda.border = bordeGris(
-        esCabecera
-          ? { bottom: { style: "thin", color: { argb: XLS_ROJO_BORDE } } }
-          : esTotal
-            ? { top: { style: "medium", color: { argb: XLS_BORDE_TOTAL } } }
-            : null
-      );
-      celda.alignment = { horizontal: col.align, vertical: "middle" };
-
-      if (esCabecera) {
-        celda.font = { bold: true, color: { argb: XLS_BLANCO }, size: 11 };
-        celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_ROJO } };
-      } else {
-        if (esTotal) {
-          celda.font = { bold: true };
-          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLS_TOTAL_BG } };
-        } else if (fondo) {
-          celda.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fondo } };
-        }
-        if (col.moneda) celda.numFmt = XLS_MONEDA;
-      }
-    }
-
-    fila.height = esCabecera ? 24 : 19; // algo más de aire que el alto por defecto
-  }
-
-  // Ancho por columna según su contenido más largo.
-  for (let c = 1; c <= cols.length; c++) {
-    const col = cols[c - 1];
-    let ancho = 10;
-    for (let r = 1; r <= filaTotal; r++) {
-      const v = ws.getRow(r).getCell(c).value;
-      const texto = v == null ? "" : typeof v === "number" && col.moneda ? money(v) : String(v);
-      ancho = Math.max(ancho, texto.length + 3);
-    }
-    ws.getColumn(c).width = Math.min(ancho, 42);
-  }
+/* Vales tal y como los consume el módulo de Excel. La fecha se resuelve aquí
+   porque valeDate() depende de Timestamp de Firestore; así el módulo queda
+   libre de Firebase y se puede probar desde Node.
+   A propósito NO se copian qrCode ni batchId: el QR es una credencial
+   operativa del vale y no tiene ningún uso analítico en el reporte. */
+function valesParaExcel() {
+  return allVales.map((v) => ({
+    nombre: v.nombre,
+    categoria: v.categoria,
+    monto: Number(v.monto) || 0,
+    fecha: valeDate(v),
+    registradoPor: v.registradoPor || "",
+    folio: v.folio || null,
+    anulado: !!v.anulado,
+    notas: v.notas || "",
+  }));
 }
 
 async function exportExcel() {
@@ -2012,31 +1847,12 @@ async function exportExcel() {
   btnExcel.disabled = true;
   btnExcel.textContent = "Generando…";
   try {
-    const ExcelJS = await cargarExcelJs();
-    const wb = new ExcelJS.Workbook();
-    wb.creator = "Spectro Networks — Vales";
-    wb.created = new Date();
-
-    // --- Hoja 1: Histórico (idéntico al CSV anterior) ---
-    const hoja = wb.addWorksheet("Histórico");
-    hoja.addRow(COLS_HISTORICO.map((c) => c.titulo));
-    for (const r of adminRows()) hoja.addRow([r.nombre, r.count, r.total]);
-    agregarFilaTotal(hoja, COLS_HISTORICO);
-    formatearHoja(hoja, COLS_HISTORICO);
-
-    // --- Una hoja por mes con vales, la más reciente primero ---
-    for (const [clave, vales] of valesPorMes()) {
-      const hm = wb.addWorksheet(nombreHojaMes(clave));
-      hm.addRow(COLS_MES.map((c) => c.titulo));
-      for (const r of filasDelMes(vales)) hm.addRow([r.nombre, r.categoria, r.count, r.total]);
-      agregarFilaTotal(hm, COLS_MES);
-      formatearHoja(hm, COLS_MES);
-    }
-
-    const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
+    // El módulo de Excel se importa AQUÍ, no arriba: son ~44 KB (más ExcelJS,
+    // que él mismo descarga bajo demanda) que no tienen por qué pesar en cada
+    // arranque de la app en el celular. El navegador lo cachea tras el primer
+    // clic, y si la descarga falla el catch de abajo ya avisa.
+    const { generarLibroExcel } = await import("./excel-export.js");
+    const blob = await generarLibroExcel(valesParaExcel());
     downloadBlob(blob, `vales-spectro-${todayInput()}.xlsx`);
     showToast("✅ Excel generado");
   } catch (err) {
