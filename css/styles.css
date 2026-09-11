@@ -1422,16 +1422,34 @@ tr.row-socio td {
   .col-estado {
     display: none;
   }
+  /* Columna de acciones. Con `table-layout: fixed` este ancho es firme, y
+     desde que la celda lleva DOS botones ("Ver" y "Anular") las 4rem de antes
+     dejaban ~25px por botón: el texto se partía letra a letra en vertical. */
   #view-registro th:last-child,
   #view-registro td:last-child,
   #view-admin table:not(.resumen-table) th:last-child,
   #view-admin table:not(.resumen-table) td:last-child {
-    width: 4rem;
+    width: 5.5rem;
   }
-  .btn-anular {
+  /* En pantalla estrecha los botones se apilan en vez de competir por el
+     ancho de la celda. */
+  .acciones {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* Las celdas usan `overflow-wrap: anywhere` para que quepan los nombres
+     largos; dentro de un botón eso es lo que partía "Ver" en vertical, así
+     que aquí se vuelve al ajuste de palabra normal. */
+  .btn-anular,
+  .btn-ver {
     max-width: 100%;
     padding-inline: 0.35rem;
     font-size: 0.72rem;
+    min-height: 44px;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
   }
 
   /* Inventario: conserva sólo los datos operativos y permite desplazamiento
