@@ -13,7 +13,8 @@ import assert from "node:assert/strict";
 import {
   EMPTY_FILTERS, monthRange, rangeMonthKey, filterDashboardVales,
   calculateDashboardMetrics, aggregateTopRequesters, requesterDetailRows,
-  chartMonths, monthInPeriod, aggregateMonthlySeries, OTROS,
+  chartMonths, monthInPeriod, aggregateMonthlySeries,
+  orderChartRequesters, assignRequesterColors, REQUESTER_PALETTE,
 } from "../js/dashboard-data.js";
 
 let n = 0;
@@ -116,25 +117,51 @@ ok("ventana de la gráfica: mín. 6, máx. 12 meses", () => {
   assert.ok(!monthInPeriod("2026-08", "2026-09-10", "2026-10-02"));
 });
 
-ok("serie mensual: meses continuos, segmentos + Otros, sin anulados", () => {
+ok("serie mensual: meses continuos, un segmento por solicitante, sin Otros ni anulados", () => {
   const months = chartMonths(sep.dateFrom, sep.dateTo);
   const dims = filterDashboardVales(data, sep, { ignorePeriod: true });
-  const s = aggregateMonthlySeries(dims, months, ["Juanjo", "Lorena"]);
+  const s = aggregateMonthlySeries(dims, months);
   assert.equal(s.length, 6);
   assert.equal(s[0].total, 0); // abril: cero, no inventado
   const sepRow = s.at(-1);
   assert.equal(sepRow.total, 3000);
-  assert.equal(sepRow.bySegment.get("Juanjo"), 1000);
-  assert.equal(sepRow.bySegment.get(OTROS), 1000);
+  assert.deepEqual([...sepRow.bySegment.keys()].sort(), ["Juanjo", "Lorena", "Operaciones (General)"]);
+  assert.equal(sepRow.bySegment.get("Juanjo"), 1000); // el anulado no suma
+  assert.ok(s.every((m) => !m.bySegment.has("Otros")));
   const ago = s.at(-2);
-  assert.equal(ago.total, 700);
-  const sum = [...sepRow.bySegment.values()].reduce((a, b) => a + b, 0);
-  assert.equal(sum, sepRow.total);
+  assert.deepEqual([...ago.bySegment.entries()].sort(), [["Eugenio Galán", 200], ["Lorena", 500]]);
+  for (const m of s) assert.equal([...m.bySegment.values()].reduce((a, b) => a + b, 0), m.total);
+});
+
+ok("orden de segmentos: periodo (importe → vales → nombre) y luego resto de la ventana", () => {
+  const period = aggregateTopRequesters(filterDashboardVales(data, sep));
+  const windowR = aggregateTopRequesters(filterDashboardVales(data, { dateFrom: "2026-04-01", dateTo: "2026-09-30" }));
+  assert.deepEqual(orderChartRequesters(period, windowR),
+    ["Juanjo", "Operaciones (General)", "Lorena", "Eugenio Galán"]);
+});
+
+ok("colores fijos: sin grises, sin repetir, independientes de filtros", () => {
+  const dir = ["Eugenio Galán", "Juan Jr", "Andrea", "Lorena", "Juanjo"];
+  const a = assignRequesterColors(dir, ["Zeta", "Lorena", "Alfa"]);
+  const b = assignRequesterColors(dir, ["Alfa", "Zeta"]);
+  assert.equal(a.get("Lorena"), b.get("Lorena"));
+  assert.equal(a.get("Alfa"), REQUESTER_PALETTE[5]); // históricos: tras el directorio, alfabético
+  assert.equal(a.get("Zeta"), REQUESTER_PALETTE[6]);
+  assert.equal(new Set(REQUESTER_PALETTE).size, REQUESTER_PALETTE.length);
+  for (const hex of REQUESTER_PALETTE) {
+    // Saturación HSL: ningún gris ni tono apagado para solicitantes.
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+    const max = Math.max(r, g, bl), min = Math.min(r, g, bl), l = (max + min) / 2;
+    const sat = max === min ? 0 : (max - min) / (1 - Math.abs(2 * l - 1));
+    assert.ok(sat >= 0.5, `${hex} parece gris (s=${sat.toFixed(2)})`);
+  }
+  const many = assignRequesterColors([], Array.from({ length: 40 }, (_, i) => "P" + String(i).padStart(2, "0")));
+  assert.equal(new Set(many.values()).size, 40);
 });
 
 ok("gráfica respeta dimensiones (persona) igual que los KPIs", () => {
   const f = { ...sep, persona: "Lorena" };
-  const s = aggregateMonthlySeries(filterDashboardVales(data, f, { ignorePeriod: true }), chartMonths(f.dateFrom, f.dateTo), ["Lorena"]);
+  const s = aggregateMonthlySeries(filterDashboardVales(data, f, { ignorePeriod: true }), chartMonths(f.dateFrom, f.dateTo));
   const kpi = calculateDashboardMetrics(filterDashboardVales(data, f));
   assert.equal(s.at(-1).total, kpi.total);
   assert.equal(s.at(-2).total, 500);

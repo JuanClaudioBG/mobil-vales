@@ -131,11 +131,12 @@ export function monthInPeriod(key, dateFrom, dateTo) {
   return (!dateTo || r.dateFrom <= dateTo) && (!dateFrom || r.dateTo >= dateFrom);
 }
 
-// Serie mensual apilada. `dimensionFiltered` = mismas dimensiones sin periodo.
-// Segmentos: los solicitantes de `segmentNames` y el resto como "Otros".
-export function aggregateMonthlySeries(dimensionFiltered, months, segmentNames) {
+const nameOf = (r) => r.nombre || "Sin nombre";
+
+// Serie mensual apilada: un segmento por solicitante REAL (sin agrupar en
+// "Otros"). `dimensionFiltered` = mismas dimensiones sin periodo.
+export function aggregateMonthlySeries(dimensionFiltered, months) {
   const keys = new Set(months);
-  const segs = new Set(segmentNames);
   const rows = new Map(months.map((m) => [m, { month: m, total: 0, count: 0, bySegment: new Map() }]));
   for (const r of activeOnly(dimensionFiltered)) {
     if (!r.date) continue;
@@ -143,12 +144,47 @@ export function aggregateMonthlySeries(dimensionFiltered, months, segmentNames) 
     if (!keys.has(key)) continue;
     const row = rows.get(key);
     const amount = amountOf(r);
-    const seg = segs.has(r.nombre) ? r.nombre : OTROS;
     row.total += amount;
     row.count += 1;
-    row.bySegment.set(seg, (row.bySegment.get(seg) || 0) + amount);
+    row.bySegment.set(nameOf(r), (row.bySegment.get(nameOf(r)) || 0) + amount);
   }
   return months.map((m) => rows.get(m));
 }
 
-export const OTROS = "Otros";
+// Orden de segmentos/leyenda: primero el ranking del periodo (importe desc →
+// vales desc → nombre asc); después, con el mismo criterio sobre la ventana,
+// quienes sólo tienen actividad en otros meses visibles. Nadie queda fuera.
+export function orderChartRequesters(periodRanking, windowRanking) {
+  const names = periodRanking.map((r) => r.name);
+  const seen = new Set(names);
+  for (const r of windowRanking) if (!seen.has(r.name)) names.push(r.name);
+  return names;
+}
+
+// Paleta para solicitantes en tema oscuro. Elegida por máximo-mínimo de
+// distancia perceptual (CIEDE2000) entre candidatos vivos (sin grises ni tonos
+// turbios; L* 52–90 para leerse sobre la tarjeta #1a1f27): entre los 20
+// primeros ningún par queda por debajo de ΔE≈13. El orden es el de la
+// selección, así que colores contiguos en la paleta son muy distintos.
+export const REQUESTER_PALETTE = [
+  "#ef4444", "#19e619", "#26a3d9", "#e6a819", "#e0acf6", "#88f2e7",
+  "#e619a8", "#786ce5", "#f2a788", "#e4e495", "#f2889d", "#e66b19",
+  "#95a5e4", "#33cc8f", "#63d2ee", "#197fe6", "#cd6ce5", "#b6edbb",
+  "#ea3e72", "#ebc68e", "#bde619", "#e6d119", "#d49454", "#dc74b3",
+];
+
+// Color FIJO por solicitante: depende del directorio (orden de PERSONAS) y,
+// para nombres históricos fuera de él, del orden alfabético; nunca de los
+// filtros. Más allá de la paleta se generan tonos por ángulo áureo.
+export function assignRequesterColors(directoryNames, allNames) {
+  const order = [...directoryNames];
+  const known = new Set(order);
+  const extra = [...new Set(allNames)].filter((n) => !known.has(n)).sort((a, b) => a.localeCompare(b, "es"));
+  const map = new Map();
+  [...order, ...extra].forEach((name, i) => {
+    map.set(name, i < REQUESTER_PALETTE.length
+      ? REQUESTER_PALETTE[i]
+      : `hsl(${Math.round((i * 137.508) % 360)} 70% 62%)`);
+  });
+  return map;
+}

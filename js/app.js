@@ -33,7 +33,8 @@ import {
   requesterDetailRows,
   chartMonths,
   aggregateMonthlySeries,
-  OTROS,
+  orderChartRequesters,
+  assignRequesterColors,
 } from "./dashboard-data.js";
 import {
   initInventario,
@@ -1588,9 +1589,6 @@ function renderHistorial() {
 //        no derivar de PERSONAS.depto).
 //  TODO: filtro Unidad — pendiente de producto
 const TOP_VISIBLE = 5;
-// Pocos colores: rojo de marca para el #1 y tonos sobrios para el resto.
-const SEGMENT_COLORS = ["#ed1c24", "#5b8def", "#3fb68b", "#d9a23b", "#9b7bf0"];
-const OTROS_COLOR = "#4a5566";
 
 let dashFilters = { ...EMPTY_FILTERS, ...monthRange(currentMonthKey()) };
 let dashDetail = null; // nombre del solicitante abierto en el detalle
@@ -1730,10 +1728,14 @@ function renderDashboard() {
   dashSocCard.hidden = cat("Socio").count === 0;
 
   const ranking = aggregateTopRequesters(filtered);
-  const colors = new Map(ranking.slice(0, SEGMENT_COLORS.length).map((r, i) => [r.name, SEGMENT_COLORS[i]]));
+  // Color fijo por solicitante (no depende de filtros): el mismo en Top, gráfica y leyenda.
+  const colors = assignRequesterColors(
+    PERSONAS.map((p) => p.nombre),
+    records.map((r) => r.nombre || "Sin nombre")
+  );
   renderDashTop(ranking, colors);
   renderDashDetail(filtered);
-  renderDashChart(records, colors);
+  renderDashChart(records, ranking, colors);
 }
 
 function renderDashChips(presetMonth) {
@@ -1801,7 +1803,7 @@ function renderDashTop(ranking, colors) {
   for (const r of visibles) {
     const rank = ranking.indexOf(r) + 1;
     const pct = top1 ? Math.max(2, Math.round((r.total / top1) * 100)) : 0;
-    const color = colors.get(r.name) || OTROS_COLOR;
+    const color = colors.get(r.name);
     const row = document.createElement("button");
     row.type = "button";
     row.className = "lb-row" + (r.name === dashDetail ? " lb-row--selected" : "");
@@ -1855,14 +1857,18 @@ function renderDashDetail(filtered) {
     .join("");
 }
 
-function renderDashChart(records, colors) {
+function renderDashChart(records, periodRanking, colors) {
   const f = dashFilters;
   // Mismas dimensiones (persona/tipo); el periodo sólo define la ventana de meses.
   const dimensionFiltered = filterDashboardVales(records, f, { ignorePeriod: true });
   const months = chartMonths(f.dateFrom, f.dateTo);
-  const segments = [...colors.keys()];
-  const series = aggregateMonthlySeries(dimensionFiltered, months, segments);
-  const hasOtros = series.some((m) => m.bySegment.has(OTROS));
+  const series = aggregateMonthlySeries(dimensionFiltered, months);
+  // TODOS los solicitantes con importe en la ventana, sin agrupar en "Otros".
+  const inWindow = new Set(series.flatMap((m) => [...m.bySegment.keys()]));
+  const windowRanking = aggregateTopRequesters(
+    filterDashboardVales(dimensionFiltered, { dateFrom: monthRange(months[0]).dateFrom, dateTo: monthRange(months.at(-1)).dateTo })
+  );
+  const segNames = orderChartRequesters(periodRanking, windowRanking).filter((n) => inWindow.has(n));
   const hasData = series.some((m) => m.total > 0);
 
   dashChart?.destroy();
@@ -1885,17 +1891,18 @@ function renderDashChart(records, colors) {
     const [y, mm] = m.split("-").map(Number);
     return new Date(y, mm - 1, 1).toLocaleDateString("es-MX", { month: "short", year: "2-digit" });
   });
-  const segNames = hasOtros ? [...segments, OTROS] : segments;
   const datasets = segNames.map((name) => {
-    const base = name === OTROS ? OTROS_COLOR : colors.get(name);
     return {
       label: name,
       data: series.map((m) => m.bySegment.get(name) || 0),
-      backgroundColor: base,
+      backgroundColor: colors.get(name),
+      // Separador del color de la tarjeta entre segmentos apilados.
       borderColor: "#1a1f27",
-      borderWidth: { top: 1 },
+      borderWidth: { top: 1.5 },
       borderSkipped: false,
-      maxBarThickness: 56,
+      maxBarThickness: 84,
+      categoryPercentage: 0.78,
+      barPercentage: 0.9,
       stack: "total",
     };
   });
@@ -1912,9 +1919,9 @@ function renderDashChart(records, colors) {
       afterDatasetsDraw(chart) {
         const ctx = chart.ctx;
         ctx.save();
-        ctx.font = "600 11px system-ui, sans-serif";
-        // Columnas angostas (móvil): importe compacto para que no se encimen.
+        // Columnas angostas (móvil): importe compacto y letra menor para que no se encimen.
         const slot = chart.chartArea.width / series.length;
+        ctx.font = `700 ${slot < 64 ? 10.5 : 12}px system-ui, sans-serif`;
         const label = (n) => (slot < 64 ? "$" + (n >= 1000 ? Math.round(n / 100) / 10 + "k" : n) : money(n));
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
@@ -1930,7 +1937,7 @@ function renderDashChart(records, colors) {
           });
           if (top === Infinity) return;
           ctx.fillStyle = text;
-          ctx.fillText(label(m.total), x, top - 4);
+          ctx.fillText(label(m.total), x, top - 6);
         });
         ctx.restore();
       },
@@ -1939,7 +1946,7 @@ function renderDashChart(records, colors) {
       responsive: true,
       maintainAspectRatio: false,
       animation: reduced ? false : { duration: 300 },
-      layout: { padding: { top: 22 } },
+      layout: { padding: { top: 26 } },
       interaction: { mode: "point", intersect: true }, // sólo el segmento bajo el puntero
       plugins: {
         legend: { display: false },
@@ -1965,7 +1972,7 @@ function renderDashChart(records, colors) {
         e.native.target.style.cursor = els.length || chartMonthAt(e) != null ? "pointer" : "default";
       },
       onClick: (e, els) => {
-        // Segmento → mes + detalle del solicitante. Columna/eje/"Otros" → sólo el mes.
+        // Segmento → mes + detalle del solicitante. Columna vacía/eje → sólo el mes.
         const seg = els[0];
         const i = seg ? seg.index : chartMonthAt(e);
         if (i == null) return;
@@ -1973,17 +1980,17 @@ function renderDashChart(records, colors) {
         dashFilters = { ...dashFilters, ...monthRange(months[i]) };
         dashExpanded = false;
         // Diferido: el render destruye esta gráfica y no debe hacerlo dentro de su propio evento.
-        setTimeout(() => (name && name !== OTROS ? openDashDetail(name) : renderDashboard()));
+        setTimeout(() => (name ? openDashDetail(name) : renderDashboard()));
       },
     },
   });
 
-  // Leyenda propia (HTML) con los mismos colores que el Top.
+  // Leyenda propia (HTML): todos los solicitantes, mismo orden y colores que los segmentos.
   for (const name of segNames) {
     const item = document.createElement("span");
     item.className = "legend-item";
     item.innerHTML =
-      `<span class="legend-dot" style="background:${name === OTROS ? OTROS_COLOR : colors.get(name)}"></span>` +
+      `<span class="legend-dot" style="background:${colors.get(name)}"></span>` +
       escapeHtml(name);
     dashLegend.appendChild(item);
   }

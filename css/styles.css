@@ -1160,7 +1160,7 @@ tr.row-socio td {
 }
 .dash-canvas {
   position: relative;
-  height: 300px;
+  height: 440px;
   min-width: 0;
 }
 .dash-canvas canvas {
@@ -1168,11 +1168,35 @@ tr.row-socio td {
   width: 100%;
   height: 100%;
 }
+/* Leyenda con todos los solicitantes: envuelve y, si crece mucho, scroll interno. */
+#dash-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.3rem 0.9rem;
+  max-height: 9rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.25rem;
+  font-size: 0.8rem;
+  color: #c9d1dc;
+}
+#dash-legend .legend-item {
+  gap: 0.4rem;
+  min-width: 0;
+  line-height: 1.25;
+}
+#dash-legend .legend-dot {
+  width: 9px;
+  height: 9px;
+}
 .dash-chart-hint {
   margin: -0.5rem 0 0.6rem;
   font-size: 0.78rem;
 }
 @media (max-width: 900px) {
+  .dash-canvas {
+    height: 360px;
+  }
   .dash-split--detail {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1188,7 +1212,11 @@ tr.row-socio td {
     flex: 1 1 100%;
   }
   .dash-canvas {
-    height: 260px;
+    height: 300px;
+  }
+  #dash-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0.6rem;
   }
   /* Top en móvil: nombre e importe arriba, barra a todo el ancho debajo. */
   button.lb-row {
