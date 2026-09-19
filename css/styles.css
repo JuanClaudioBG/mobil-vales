@@ -1004,6 +1004,209 @@ tr.row-socio td {
 }
 
 /* --- Dashboard ------------------------------------------------------ */
+.dash-filters {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+}
+.dash-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.75rem;
+}
+.dash-filter-row label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1 1 150px;
+  min-width: 0;
+}
+.dash-filter-row input,
+.dash-filter-row select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+.dash-filter-row #btn-dash-actualizar {
+  min-height: 44px;
+  flex: 0 0 auto;
+}
+.dash-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.dash-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.dash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  max-width: 100%;
+  padding: 0.2rem 0.3rem 0.2rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.dash-chip:not(:has(.dash-chip-x)) {
+  padding-right: 0.65rem;
+}
+.dash-chip-x {
+  display: inline-grid;
+  place-items: center;
+  /* Área táctil de 44px; el margen negativo mantiene el chip compacto. */
+  width: 44px;
+  height: 44px;
+  margin: -8px -8px -8px -6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.dash-chip-x:hover {
+  filter: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+#dash-clear,
+#dash-vertodos {
+  min-height: 44px;
+  min-width: 44px;
+}
+.dash-detail-format {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+}
+
+/* Top + detalle: 60/40 sólo con un solicitante abierto; si no, el Top ocupa todo. */
+.dash-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+.dash-split > .card {
+  min-width: 0;
+  margin: 0;
+}
+.dash-split--detail {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+.dash-detail {
+  border-top: 2px solid var(--accent);
+}
+.dash-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+.dash-detail-head h2 {
+  margin: 0.1rem 0 0.2rem;
+  overflow-wrap: anywhere;
+}
+.dash-crumb,
+#dash-detail-summary {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.dash-close {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.dash-close:hover {
+  filter: none;
+  border-color: var(--accent);
+}
+.dash-detail-table {
+  width: 100%;
+  font-size: 0.85rem;
+}
+.dash-detail-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dash-detail-table td {
+  white-space: nowrap;
+}
+.dash-detail-table th,
+.dash-detail-table td {
+  padding: 0.55rem 0.45rem;
+}
+.dash-code {
+  font-variant-numeric: tabular-nums;
+}
+.dash-canvas {
+  position: relative;
+  height: 300px;
+  min-width: 0;
+}
+.dash-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.dash-chart-hint {
+  margin: -0.5rem 0 0.6rem;
+  font-size: 0.78rem;
+}
+@media (max-width: 900px) {
+  .dash-split--detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash-detail {
+    scroll-margin-top: 0.75rem;
+  }
+}
+@media (max-width: 560px) {
+  .dash-filter-row label {
+    flex-basis: calc(50% - 0.4rem);
+  }
+  .dash-filter-row #btn-dash-actualizar {
+    flex: 1 1 100%;
+  }
+  .dash-canvas {
+    height: 260px;
+  }
+  /* Top en móvil: nombre e importe arriba, barra a todo el ancho debajo. */
+  button.lb-row {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    column-gap: 0.5rem;
+    row-gap: 0.3rem;
+    padding: 0.5rem;
+  }
+  button.lb-row .lb-name {
+    min-width: 0;
+  }
+  button.lb-row .lb-bar {
+    grid-column: 3 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+}
 .dash-controls {
   display: flex;
   flex-wrap: wrap;
@@ -1136,6 +1339,24 @@ tr.row-socio td {
 .lb-row--first {
   background: rgba(237, 28, 36, 0.1);
 }
+button.lb-row {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.lb-row:hover {
+  filter: none;
+  background: rgba(255, 255, 255, 0.04);
+}
+button.lb-row.lb-row--selected {
+  border-color: var(--accent);
+  background: rgba(237, 28, 36, 0.1);
+}
 .lb-rank {
   width: 1.2rem;
   text-align: center;
@@ -1212,6 +1433,9 @@ tr.row-socio td {
   }
   .dash-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash-stat-grid #dash-soc-card:not([hidden]) {
+    grid-column: 1 / -1;
   }
   .lb-name {
     flex-basis: 105px;

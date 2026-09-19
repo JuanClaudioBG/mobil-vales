@@ -21,10 +21,20 @@ import {
   MONTOS,
   PERSONAS,
   DEPARTAMENTOS,
-  PERSONA_COLORS,
-  COLOR_DEFAULT,
 } from "./config.js";
 import { money, escapeHtml, todayInput } from "./utils.js";
+import {
+  EMPTY_FILTERS,
+  monthRange,
+  rangeMonthKey,
+  filterDashboardVales,
+  calculateDashboardMetrics,
+  aggregateTopRequesters,
+  requesterDetailRows,
+  chartMonths,
+  aggregateMonthlySeries,
+  OTROS,
+} from "./dashboard-data.js";
 import {
   initInventario,
   ensurePool,
@@ -141,18 +151,36 @@ const views = {
 
 // Dashboard
 const dashMes = $("#dash-mes");
+const dashFrom = $("#dash-from");
+const dashTo = $("#dash-to");
+const dashPersona = $("#dash-persona");
+const dashTipo = $("#dash-tipo");
+const dashChips = $("#dash-chips");
+const dashClear = $("#dash-clear");
 const dashCount = $("#dash-count");
 const dashTotal = $("#dash-total");
 const dashTrend = $("#dash-trend");
 const dashEmp = $("#dash-emp");
 const dashFam = $("#dash-fam");
 const dashSoc = $("#dash-soc");
+const dashSocCard = $("#dash-soc-card");
+const dashSplit = $("#dash-split");
 const dashTop = $("#dash-top");
 const dashTopEmpty = $("#dash-top-empty");
-const dashChart = $("#dash-chart");
-const dashLegend = $("#dash-legend");
-const dashLegendToggle = $("#dash-legend-toggle");
 const dashVerTodos = $("#dash-vertodos");
+const dashDetailEl = $("#dash-detail");
+const dashDetailClose = $("#dash-detail-close");
+const dashCrumbName = $("#dash-crumb-name");
+const dashDetailName = $("#dash-detail-name");
+const dashDetailSummary = $("#dash-detail-summary");
+const dashDetailFormat = $("#dash-detail-format");
+const dashDetailBody = $("#dash-detail-body");
+const dashDetailEmpty = $("#dash-detail-empty");
+const dashChartCanvas = $("#dash-chart");
+const dashChartWrap = $("#dash-chart-wrap");
+const dashChartHint = $("#dash-chart-hint");
+const dashChartEmpty = $("#dash-chart-empty");
+const dashLegend = $("#dash-legend");
 
 // Admin
 const adminBody = $("#admin-body");
@@ -175,8 +203,6 @@ const carrito = new Map(); // monto -> cantidad
 const MAX_VALES = 20; // tope de vales por registro
 let pendingSave = null; // payload en espera de confirmación
 let saving = false; // evita doble envío
-let dashExpanded = false; // leaderboard: mostrar todos vs top 5
-let legendExpanded = false; // leyenda de la gráfica: mostrar todos vs top 5
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -497,7 +523,7 @@ function updateFechaToggle() {
 
 // Abrir el selector de fecha/mes al tocar cualquier parte del campo
 // (no sólo el pequeño ícono del calendario). Mejora el acceso en móvil.
-for (const el of [fechaValeInput, filtroMes, dashMes]) {
+for (const el of [fechaValeInput, filtroMes, dashMes, dashFrom, dashTo]) {
   el.addEventListener("click", () => {
     if (typeof el.showPicker === "function") {
       try {
@@ -1553,218 +1579,422 @@ function renderHistorial() {
 }
 
 // ===========================================================================
-//  Dashboard
+//  Dashboard  (sólo lectura: filtra y agrega `allVales` en memoria)
 // ===========================================================================
+//  Flujo: allVales → dashRecords() → filterDashboardVales(dashFilters) →
+//  agregaciones puras (dashboard-data.js) → render de cada widget.
+//  Estado de UI (no se persiste): filtros, detalle abierto y "Ver todos".
+//  TODO: filtro Área — requiere un campo real `area` en los vales (hoy no existe;
+//        no derivar de PERSONAS.depto).
+//  TODO: filtro Unidad — pendiente de producto
+const TOP_VISIBLE = 5;
+// Pocos colores: rojo de marca para el #1 y tonos sobrios para el resto.
+const SEGMENT_COLORS = ["#ed1c24", "#5b8def", "#3fb68b", "#d9a23b", "#9b7bf0"];
+const OTROS_COLOR = "#4a5566";
+
+let dashFilters = { ...EMPTY_FILTERS, ...monthRange(currentMonthKey()) };
+let dashDetail = null; // nombre del solicitante abierto en el detalle
+let dashExpanded = false; // Top: mostrar todos vs top 5
+let dashChart = null; // instancia de Chart.js
+
+function defaultDashFilters() {
+  return { ...EMPTY_FILTERS, ...monthRange(currentMonthKey()) };
+}
+
+// Normaliza cada vale una sola vez por render (fecha ya resuelta).
+function dashRecords() {
+  return allVales.map((v) => ({
+    id: v.id,
+    nombre: v.nombre || "",
+    categoria: v.categoria || "",
+    monto: v.monto,
+    date: valeDate(v),
+    anulado: Boolean(v.anulado),
+    // Sin qrCode: el código canjeable nunca se muestra en analítica.
+    folio: v.folio != null && String(v.folio).trim() !== "" ? String(v.folio).trim() : "",
+  }));
+}
+
+function setDashFilters(patch) {
+  dashFilters = { ...dashFilters, ...patch };
+  // Con un rango invertido se intercambian los extremos: siempre hay UN periodo válido.
+  if (dashFilters.dateFrom && dashFilters.dateTo && dashFilters.dateFrom > dashFilters.dateTo) {
+    [dashFilters.dateFrom, dashFilters.dateTo] = [dashFilters.dateTo, dashFilters.dateFrom];
+  }
+  dashExpanded = false;
+  renderDashboard();
+}
+
 dashMes.addEventListener("change", () => {
-  dashExpanded = false; // al cambiar de mes, colapsa el leaderboard
-  legendExpanded = false;
+  // El mes es un preset del rango canónico; vacío = volver al mes actual.
+  setDashFilters(monthRange(dashMes.value || currentMonthKey()));
+});
+dashFrom.addEventListener("change", () => setDashFilters({ dateFrom: dashFrom.value }));
+dashTo.addEventListener("change", () => setDashFilters({ dateTo: dashTo.value }));
+dashPersona.addEventListener("change", () => setDashFilters({ persona: dashPersona.value }));
+dashTipo.addEventListener("change", () => setDashFilters({ tipo: dashTipo.value }));
+dashClear.addEventListener("click", () => {
+  // Limpia filtros; el detalle abierto (si lo hay) se conserva y se recalcula.
+  dashFilters = defaultDashFilters();
+  dashExpanded = false;
   renderDashboard();
 });
 dashVerTodos.addEventListener("click", () => {
   dashExpanded = !dashExpanded;
   renderDashboard();
 });
-dashLegendToggle.addEventListener("click", () => {
-  legendExpanded = !legendExpanded;
+dashDetailClose.addEventListener("click", () => {
+  // Sólo cierra el detalle: los filtros se mantienen.
+  const name = dashDetail;
+  dashDetail = null;
   renderDashboard();
+  dashTop.querySelector(`[data-name="${CSS.escape(name || "")}"]`)?.focus();
+});
+dashTop.addEventListener("click", (e) => {
+  const row = e.target.closest(".lb-row[data-name]");
+  if (!row) return;
+  openDashDetail(dashDetail === row.dataset.name ? null : row.dataset.name);
 });
 
-function personaColor(nombre) {
-  return PERSONA_COLORS[nombre] || COLOR_DEFAULT;
+function openDashDetail(name) {
+  dashDetail = name;
+  renderDashboard();
+  // En móvil el panel queda debajo del Top: se lleva a la vista.
+  if (name && window.matchMedia("(max-width: 900px)").matches) {
+    dashDetailEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function fillDashSelect(select, values, current) {
+  const first = select.options[0];
+  select.replaceChildren(first);
+  for (const v of values) {
+    const opt = document.createElement("option");
+    opt.value = v;
+    opt.textContent = v;
+    select.appendChild(opt);
+  }
+  // Un valor filtrado que ya no aparece en los datos se conserva visible.
+  if (current && !values.includes(current)) {
+    const opt = document.createElement("option");
+    opt.value = current;
+    opt.textContent = current;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+function shortDay(iso) {
+  return parseDateInput(iso).toLocaleDateString("es-MX", { day: "2-digit", month: "short" });
+}
+
+function periodLabel({ dateFrom, dateTo }) {
+  const mk = rangeMonthKey(dateFrom, dateTo);
+  if (mk) {
+    const [y, m] = mk.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("es-MX", { month: "long", year: "numeric" });
+  }
+  if (dateFrom && dateTo) return `${shortDay(dateFrom)} – ${shortDay(dateTo)} ${dateTo.slice(0, 4)}`;
+  if (dateFrom) return `Desde ${shortDay(dateFrom)} ${dateFrom.slice(0, 4)}`;
+  if (dateTo) return `Hasta ${shortDay(dateTo)} ${dateTo.slice(0, 4)}`;
+  return "Todo el historial";
 }
 
 function renderDashboard() {
-  const mes = dashMes.value || currentMonthKey();
-  const delMes = activos(allVales).filter((v) => monthKey(valeDate(v)) === mes);
+  const records = dashRecords();
+  const f = dashFilters;
 
-  const total = sum(delMes.map((v) => v.monto));
-  dashCount.textContent = String(delMes.length);
-  dashTotal.textContent = money(total);
+  // --- Controles: reflejan el estado único -------------------------------
+  const personas = [...new Set(records.map((r) => r.nombre).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "es"));
+  const tipos = [...new Set(records.map((r) => r.categoria).filter(Boolean))]
+    .sort((a, b) => CATEGORIAS.indexOf(a) - CATEGORIAS.indexOf(b));
+  fillDashSelect(dashPersona, personas, f.persona);
+  fillDashSelect(dashTipo, tipos, f.tipo);
+  dashFrom.value = f.dateFrom;
+  dashTo.value = f.dateTo;
+  const presetMonth = rangeMonthKey(f.dateFrom, f.dateTo);
+  dashMes.value = presetMonth || "";
+  renderDashChips(presetMonth);
 
-  // Comparación contra el mes inmediato anterior. Si ese mes no tuvo vales,
-  // se oculta para evitar porcentajes engañosos o divisiones entre cero.
-  const mesAnterior = lastNMonths(mes, 2)[0];
-  const delMesAnterior = activos(allVales).filter(
-    (v) => monthKey(valeDate(v)) === mesAnterior.key
-  );
-  renderMonthTrend(total, delMesAnterior, mesAnterior.label);
+  // --- Población filtrada (la MISMA para todos los widgets) --------------
+  const filtered = filterDashboardVales(records, f);
+  const metrics = calculateDashboardMetrics(filtered);
+  dashCount.textContent = String(metrics.count);
+  dashTotal.textContent = money(metrics.total);
+  renderDashTrend(records, metrics.total, presetMonth);
+  const cat = (name) => metrics.byTipo.get(name) || { count: 0, total: 0 };
+  dashEmp.textContent = `${cat("Empleado").count} · ${money(cat("Empleado").total)}`;
+  dashFam.textContent = `${cat("Familia").count} · ${money(cat("Familia").total)}`;
+  dashSoc.textContent = `${cat("Socio").count} · ${money(cat("Socio").total)}`;
+  dashSocCard.hidden = cat("Socio").count === 0;
 
-  const emp = delMes.filter((v) => v.categoria === "Empleado");
-  const fam = delMes.filter((v) => v.categoria === "Familia");
-  const soc = delMes.filter((v) => v.categoria === "Socio");
-  renderCategoryStat(dashEmp, emp);
-  renderCategoryStat(dashFam, fam);
-  renderCategoryStat(dashSoc, soc);
-
-  // Leaderboard del mes (ordenado por total desc)
-  const ranking = [...groupSum(delMes, (v) => v.nombre).entries()].sort(
-    (a, b) => b[1].total - a[1].total
-  );
-  renderLeaderboard(ranking);
-
-  // Gráfica apilada por persona (últimos 6 meses terminando en `mes`)
-  renderStackedChart(mes);
+  const ranking = aggregateTopRequesters(filtered);
+  const colors = new Map(ranking.slice(0, SEGMENT_COLORS.length).map((r, i) => [r.name, SEGMENT_COLORS[i]]));
+  renderDashTop(ranking, colors);
+  renderDashDetail(filtered);
+  renderDashChart(records, colors);
 }
 
-function renderCategoryStat(valueEl, vales) {
-  const total = sum(vales.map((v) => v.monto));
-  valueEl.textContent = `${vales.length} · ${money(total)}`;
-  valueEl.closest(".stat-card").hidden = vales.length === 0 && total === 0;
-}
+function renderDashChips(presetMonth) {
+  const f = dashFilters;
+  const chips = [];
+  const isDefault = presetMonth === currentMonthKey();
+  chips.push({
+    label: presetMonth ? `Periodo: ${periodLabel(f)}` : `Rango personalizado: ${periodLabel(f)}`,
+    clear: isDefault ? null : () => ({ ...monthRange(currentMonthKey()) }),
+  });
+  if (f.persona) chips.push({ label: `Persona: ${f.persona}`, clear: () => ({ persona: "" }) });
+  if (f.tipo) chips.push({ label: `Tipo: ${f.tipo}`, clear: () => ({ tipo: "" }) });
 
-function renderMonthTrend(total, valesAnteriores, mesLabel) {
-  if (valesAnteriores.length === 0) {
-    dashTrend.hidden = true;
-    return;
+  dashChips.innerHTML = "";
+  for (const chip of chips) {
+    const el = document.createElement("span");
+    el.className = "dash-chip";
+    el.textContent = chip.label;
+    if (chip.clear) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "dash-chip-x";
+      x.setAttribute("aria-label", `Quitar ${chip.label}`);
+      x.textContent = "✕";
+      x.addEventListener("click", () => setDashFilters(chip.clear()));
+      el.appendChild(x);
+    }
+    dashChips.appendChild(el);
   }
+  dashClear.hidden = !f.persona && !f.tipo && isDefault;
+}
 
-  const anterior = sum(valesAnteriores.map((v) => v.monto));
+// Comparación contra el mes anterior: sólo con preset de mes y si ese mes tuvo
+// vales activos con las mismas dimensiones (evita porcentajes engañosos).
+function renderDashTrend(records, total, presetMonth) {
+  dashTrend.hidden = true;
+  if (!presetMonth) return;
+  const prev = lastNMonths(presetMonth, 2)[0];
+  const prevMetrics = calculateDashboardMetrics(
+    filterDashboardVales(records, { ...dashFilters, ...monthRange(prev.key) })
+  );
+  if (prevMetrics.count === 0) return;
+  const anterior = prevMetrics.total;
   const cambio = anterior ? Math.round(((total - anterior) / anterior) * 100) : 0;
   const direccion = cambio > 0 ? "up" : cambio < 0 ? "down" : "flat";
   const flecha = cambio > 0 ? "↑" : cambio < 0 ? "↓" : "→";
   dashTrend.className = `stat-trend stat-trend--${direccion}`;
-  dashTrend.textContent = `${flecha} ${Math.abs(cambio)}% vs ${mesLabel}`;
+  dashTrend.textContent = `${flecha} ${Math.abs(cambio)}% vs ${prev.label}`;
   dashTrend.hidden = false;
 }
 
-function renderLeaderboard(ranking) {
+function renderDashTop(ranking, colors) {
   dashTopEmpty.hidden = ranking.length > 0;
-  dashVerTodos.hidden = ranking.length <= 5;
-  dashVerTodos.textContent = dashExpanded ? "Ver menos" : "Ver todos";
-
-  const top1 = ranking.length ? ranking[0][1].total : 0;
-  const visibles = dashExpanded ? ranking : ranking.slice(0, 5);
+  dashVerTodos.hidden = ranking.length <= TOP_VISIBLE;
+  dashVerTodos.textContent = dashExpanded ? "Ver menos" : `Ver todos (${ranking.length})`;
+  const top1 = ranking.length ? ranking[0].total : 0;
+  const visibles = dashExpanded ? ranking : ranking.slice(0, TOP_VISIBLE);
+  // El seleccionado siempre queda visible aunque esté fuera del top 5.
+  if (dashDetail && !visibles.some((r) => r.name === dashDetail)) {
+    const sel = ranking.find((r) => r.name === dashDetail);
+    if (sel) visibles.push(sel);
+  }
 
   dashTop.innerHTML = "";
-  visibles.forEach(([nombre, agg], i) => {
-    const pct = top1 ? Math.round((agg.total / top1) * 100) : 0;
-    const color = personaColor(nombre);
-    const row = document.createElement("div");
-    row.className = "lb-row" + (i === 0 ? " lb-row--first" : "");
+  for (const r of visibles) {
+    const rank = ranking.indexOf(r) + 1;
+    const pct = top1 ? Math.max(2, Math.round((r.total / top1) * 100)) : 0;
+    const color = colors.get(r.name) || OTROS_COLOR;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "lb-row" + (r.name === dashDetail ? " lb-row--selected" : "");
+    row.dataset.name = r.name;
+    row.setAttribute("aria-pressed", String(r.name === dashDetail));
     row.innerHTML =
-      `<span class="lb-rank">${i + 1}</span>` +
+      `<span class="lb-rank">${rank}</span>` +
       `<span class="lb-dot" style="background:${color}"></span>` +
-      `<span class="lb-name">${escapeHtml(nombre)}</span>` +
+      `<span class="lb-name">${escapeHtml(r.name)}</span>` +
       `<span class="lb-bar"><span class="lb-bar-fill" style="width:${pct}%;background:${color}"></span></span>` +
-      `<span class="lb-amount">${money(agg.total)} <span class="muted">(${agg.count})</span></span>`;
+      `<span class="lb-amount">${money(r.total)} <span class="muted">(${r.count})</span></span>`;
     dashTop.appendChild(row);
-  });
-}
-
-function renderStackedChart(mes) {
-  const meses = lastNMonths(mes, 6);
-  const keySet = new Set(meses.map((m) => m.key));
-
-  // Vales dentro de la ventana de 6 meses.
-  const enVentana = activos(allVales).filter((v) => keySet.has(monthKey(valeDate(v))));
-
-  // Matriz mes -> (persona -> total) y totales por persona en la ventana.
-  const matrix = new Map(meses.map((m) => [m.key, new Map()]));
-  const totPersona = new Map();
-  for (const v of enVentana) {
-    const mk = monthKey(valeDate(v));
-    const monto = Number(v.monto) || 0;
-    const cell = matrix.get(mk);
-    cell.set(v.nombre, (cell.get(v.nombre) || 0) + monto);
-    totPersona.set(v.nombre, (totPersona.get(v.nombre) || 0) + monto);
   }
-  // Orden de apilado y leyenda: por total desc (segmento más grande abajo).
-  const personas = [...totPersona.keys()].sort(
-    (a, b) => totPersona.get(b) - totPersona.get(a)
-  );
-
-  drawStackedBarChart(dashChart, meses, matrix, personas);
-  renderLegend(personas);
 }
 
-function renderLegend(personas) {
-  const visibles = legendExpanded ? personas : personas.slice(0, 5);
+function renderDashDetail(filtered) {
+  const open = Boolean(dashDetail);
+  dashDetailEl.hidden = !open;
+  dashSplit.classList.toggle("dash-split--detail", open);
+  if (!open) return;
+  const rows = requesterDetailRows(filtered, dashDetail);
+  dashCrumbName.textContent = dashDetail;
+  dashDetailName.textContent = dashDetail;
+  const total = rows.reduce((s, r) => s + (Number(r.monto) || 0), 0);
+  // El tipo es constante por solicitante: va en el resumen, no como columna.
+  const tipos = [...new Set(rows.map((r) => r.categoria).filter(Boolean))].join(" / ");
+  dashDetailSummary.textContent = rows.length
+    ? [`${rows.length} ${rows.length === 1 ? "vale activo" : "vales activos"}`, money(total), tipos, periodLabel(dashFilters)]
+        .filter(Boolean).join(" · ")
+    : periodLabel(dashFilters);
+  // Formato derivado (con folio = físico Combusa; sin folio = digital).
+  const fisicos = rows.filter((r) => r.folio).length;
+  const digitales = rows.length - fisicos;
+  dashDetailFormat.hidden = rows.length === 0;
+  dashDetailFormat.textContent = !digitales ? "Formato: Físico"
+    : !fisicos ? "Formato: Digital"
+    : `Formato: ${fisicos} ${fisicos === 1 ? "físico" : "físicos"} · ${digitales} ${digitales === 1 ? "digital" : "digitales"}`;
+  dashDetailEmpty.hidden = rows.length > 0;
+  dashDetailBody.closest("table").hidden = rows.length === 0;
+  // Área y Unidad no se guardan en los vales: la tabla muestra sólo campos reales.
+  dashDetailBody.innerHTML = rows
+    .map((r) => {
+      const fecha = r.date
+        ? r.date.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })
+        : "—";
+      return (
+        `<tr><td>${escapeHtml(fecha)}</td><td class="dash-code">${r.folio ? escapeHtml(r.folio) : "—"}</td>` +
+        `<td class="num">${money(r.monto)}</td></tr>`
+      );
+    })
+    .join("");
+}
+
+function renderDashChart(records, colors) {
+  const f = dashFilters;
+  // Mismas dimensiones (persona/tipo); el periodo sólo define la ventana de meses.
+  const dimensionFiltered = filterDashboardVales(records, f, { ignorePeriod: true });
+  const months = chartMonths(f.dateFrom, f.dateTo);
+  const segments = [...colors.keys()];
+  const series = aggregateMonthlySeries(dimensionFiltered, months, segments);
+  const hasOtros = series.some((m) => m.bySegment.has(OTROS));
+  const hasData = series.some((m) => m.total > 0);
+
+  dashChart?.destroy();
+  dashChart = null;
+  dashChartEmpty.hidden = hasData;
+  dashChartWrap.hidden = !hasData;
+  dashChartHint.hidden = !hasData;
   dashLegend.innerHTML = "";
-  for (const nombre of visibles) {
+  if (!hasData) return;
+  if (typeof window.Chart !== "function") {
+    dashChartWrap.hidden = true;
+    dashChartHint.hidden = true;
+    dashChartEmpty.textContent = "No se pudo cargar la librería de gráficas.";
+    dashChartEmpty.hidden = false;
+    return;
+  }
+  dashChartEmpty.textContent = "Sin resultados con estos filtros";
+
+  const labels = months.map((m) => {
+    const [y, mm] = m.split("-").map(Number);
+    return new Date(y, mm - 1, 1).toLocaleDateString("es-MX", { month: "short", year: "2-digit" });
+  });
+  const segNames = hasOtros ? [...segments, OTROS] : segments;
+  const datasets = segNames.map((name) => {
+    const base = name === OTROS ? OTROS_COLOR : colors.get(name);
+    return {
+      label: name,
+      data: series.map((m) => m.bySegment.get(name) || 0),
+      backgroundColor: base,
+      borderColor: "#1a1f27",
+      borderWidth: { top: 1 },
+      borderSkipped: false,
+      maxBarThickness: 56,
+      stack: "total",
+    };
+  });
+
+  const muted = "#97a1b0";
+  const text = "#e7ecf3";
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  dashChart = new window.Chart(dashChartCanvas, {
+    type: "bar",
+    data: { labels, datasets },
+    plugins: [{
+      // Total encima de cada columna.
+      id: "monthTotals",
+      afterDatasetsDraw(chart) {
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.font = "600 11px system-ui, sans-serif";
+        // Columnas angostas (móvil): importe compacto para que no se encimen.
+        const slot = chart.chartArea.width / series.length;
+        const label = (n) => (slot < 64 ? "$" + (n >= 1000 ? Math.round(n / 100) / 10 + "k" : n) : money(n));
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        series.forEach((m, i) => {
+          if (!m.total) return;
+          let top = Infinity, x = 0;
+          chart.data.datasets.forEach((_, d) => {
+            const meta = chart.getDatasetMeta(d);
+            if (meta.hidden || !chart.data.datasets[d].data[i]) return;
+            const bar = meta.data[i];
+            x = bar.x;
+            top = Math.min(top, bar.y);
+          });
+          if (top === Infinity) return;
+          ctx.fillStyle = text;
+          ctx.fillText(label(m.total), x, top - 4);
+        });
+        ctx.restore();
+      },
+    }],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: reduced ? false : { duration: 300 },
+      layout: { padding: { top: 22 } },
+      interaction: { mode: "point", intersect: true }, // sólo el segmento bajo el puntero
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "#10151e", titleColor: text, bodyColor: text,
+          borderColor: "#46546a", borderWidth: 1, padding: 10,
+          filter: (item) => item.parsed.y > 0,
+          callbacks: {
+            title: (items) => (items.length ? `${labels[items[0].dataIndex]} · total ${money(series[items[0].dataIndex].total)}` : ""),
+            label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: muted } },
+        y: {
+          stacked: true, beginAtZero: true, grace: "8%",
+          border: { display: false }, grid: { color: "rgba(151,161,176,0.12)" },
+          ticks: { color: muted, maxTicksLimit: 5, callback: (v) => money(v) },
+        },
+      },
+      onHover: (e, els) => {
+        e.native.target.style.cursor = els.length || chartMonthAt(e) != null ? "pointer" : "default";
+      },
+      onClick: (e, els) => {
+        // Segmento → mes + detalle del solicitante. Columna/eje/"Otros" → sólo el mes.
+        const seg = els[0];
+        const i = seg ? seg.index : chartMonthAt(e);
+        if (i == null) return;
+        const name = seg ? segNames[seg.datasetIndex] : null;
+        dashFilters = { ...dashFilters, ...monthRange(months[i]) };
+        dashExpanded = false;
+        // Diferido: el render destruye esta gráfica y no debe hacerlo dentro de su propio evento.
+        setTimeout(() => (name && name !== OTROS ? openDashDetail(name) : renderDashboard()));
+      },
+    },
+  });
+
+  // Leyenda propia (HTML) con los mismos colores que el Top.
+  for (const name of segNames) {
     const item = document.createElement("span");
     item.className = "legend-item";
     item.innerHTML =
-      `<span class="legend-dot" style="background:${personaColor(nombre)}"></span>` +
-      escapeHtml(nombre);
+      `<span class="legend-dot" style="background:${name === OTROS ? OTROS_COLOR : colors.get(name)}"></span>` +
+      escapeHtml(name);
     dashLegend.appendChild(item);
   }
-
-  dashLegendToggle.hidden = personas.length <= 5;
-  dashLegendToggle.textContent = legendExpanded
-    ? "Ver menos"
-    : `Ver todos (${personas.length})`;
-  dashLegendToggle.setAttribute("aria-expanded", String(legendExpanded));
 }
 
-function drawStackedBarChart(canvas, meses, matrix, personas) {
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-
-  // Tamaño lógico desde el contenedor (idempotente); si la vista está oculta,
-  // clientWidth es 0 → respaldo 640; al abrir la pestaña se redibuja bien.
-  const wrap = canvas.parentElement;
-  const cssW = Math.max(300, Math.min(640, wrap.clientWidth || 640));
-  const cssH = 338;
-  canvas.style.width = cssW + "px";
-  canvas.style.height = cssH + "px";
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
-
-  const padL = 56, padR = 16, padT = 20, padB = 34;
-  const w = cssW - padL - padR;
-  const h = cssH - padT - padB;
-
-  const mesesKeys = meses.map((m) => m.key);
-  const totalesMes = mesesKeys.map((k) => {
-    let s = 0;
-    for (const t of matrix.get(k).values()) s += t;
-    return s;
-  });
-  const max = Math.max(1, ...totalesMes);
-
-  const styles = getComputedStyle(document.documentElement);
-  const muted = styles.getPropertyValue("--muted").trim() || "#97a1b0";
-  const border = styles.getPropertyValue("--border").trim() || "#303845";
-
-  // Eje base
-  ctx.strokeStyle = border;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padL, padT + h);
-  ctx.lineTo(padL + w, padT + h);
-  ctx.stroke();
-
-  ctx.font = "12px system-ui, sans-serif";
-  ctx.textAlign = "center";
-
-  const n = meses.length;
-  const slot = w / n;
-  const barW = slot * 0.55;
-  const usableH = h - 10;
-
-  for (let i = 0; i < n; i++) {
-    const cell = matrix.get(mesesKeys[i]);
-    const x = padL + slot * i + (slot - barW) / 2;
-    let yTop = padT + h; // apila desde la base hacia arriba
-    for (const nombre of personas) {
-      const val = cell.get(nombre) || 0;
-      if (val <= 0) continue;
-      const segH = (val / max) * usableH;
-      yTop -= segH;
-      ctx.fillStyle = personaColor(nombre);
-      ctx.fillRect(x, yTop, barW, segH);
-    }
-    // Total encima de la barra
-    if (totalesMes[i] > 0) {
-      ctx.fillStyle = muted;
-      ctx.fillText(money(totalesMes[i]), x + barW / 2, yTop - 6);
-    }
-    // Etiqueta de mes
-    ctx.fillStyle = muted;
-    ctx.fillText(meses[i].label, x + barW / 2, padT + h + 18);
-  }
+// Índice del mes bajo el puntero (clic en la columna vacía o en la etiqueta).
+function chartMonthAt(e) {
+  const x = dashChart?.scales?.x;
+  if (!x || e.x < x.left || e.x > x.right) return null;
+  const i = x.getValueForPixel(e.x);
+  return Number.isInteger(i) && i >= 0 && i < x.ticks.length ? i : null;
 }
 
 // ===========================================================================

@@ -150,17 +150,31 @@
 
       <!-- ============ VISTA: DASHBOARD ============ -->
       <section id="view-dashboard" class="view" hidden>
-        <div class="dash-controls">
-          <label>Mes <input type="month" id="dash-mes" /></label>
-          <button type="button" id="btn-dash-actualizar" class="btn-secondary">↻ Actualizar</button>
+        <!-- Filtros globales: un solo estado alimenta KPIs, Top, detalle y gráfica. -->
+        <div class="card dash-filters" role="search" aria-label="Filtros del dashboard">
+          <div class="dash-filter-row">
+            <label>Periodo <input type="month" id="dash-mes" /></label>
+            <label>Desde <input type="date" id="dash-from" /></label>
+            <label>Hasta <input type="date" id="dash-to" /></label>
+            <label>Persona <select id="dash-persona"><option value="">Todas</option></select></label>
+            <label>Tipo <select id="dash-tipo"><option value="">Todos</option></select></label>
+            <!-- TODO: filtro Área — requiere un campo real `area` en los vales (no derivar de PERSONAS.depto). -->
+            <!-- TODO: filtro Unidad — pendiente de producto -->
+            <button type="button" id="btn-dash-actualizar" class="btn-secondary">↻ Actualizar</button>
+          </div>
+          <div class="dash-chips-row">
+            <div id="dash-chips" class="dash-chips" aria-live="polite"></div>
+            <button type="button" id="dash-clear" class="link-btn" hidden>Limpiar filtros</button>
+          </div>
         </div>
-        <div class="stat-grid dash-stat-grid">
+
+        <div class="stat-grid dash-stat-grid" aria-live="polite">
           <div class="stat-card">
-            <span class="stat-label">Vales del mes</span>
+            <span class="stat-label">Vales del periodo</span>
             <strong id="dash-count">0</strong>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Total del mes</span>
+            <span class="stat-label">Total del periodo</span>
             <div class="stat-value-row">
               <strong id="dash-total">$0</strong>
               <span id="dash-trend" class="stat-trend" hidden></span>
@@ -174,36 +188,50 @@
             <span class="stat-label">Familia</span>
             <strong id="dash-fam">0 · $0</strong>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" id="dash-soc-card" hidden>
             <span class="stat-label">Socios</span>
             <strong id="dash-soc">0 · $0</strong>
           </div>
         </div>
-        <div class="card">
-          <div class="dash-top-head">
-            <h2>Top personas del mes</h2>
-            <button type="button" id="dash-vertodos" class="link-btn" hidden>Ver todos</button>
-          </div>
-          <div id="dash-top" class="leaderboard"></div>
-          <p id="dash-top-empty" class="empty" hidden>Sin datos para este mes.</p>
+
+        <div id="dash-split" class="dash-split">
+          <section class="card dash-top" aria-labelledby="dash-top-title">
+            <div class="dash-top-head">
+              <h2 id="dash-top-title">Top solicitantes del periodo</h2>
+              <button type="button" id="dash-vertodos" class="link-btn" hidden>Ver todos</button>
+            </div>
+            <div id="dash-top" class="leaderboard"></div>
+            <p id="dash-top-empty" class="empty" hidden>Sin resultados con estos filtros</p>
+          </section>
+          <aside id="dash-detail" class="card dash-detail" aria-labelledby="dash-detail-title" hidden>
+            <div class="dash-detail-head">
+              <div>
+                <p class="dash-crumb muted">Dashboard › <span id="dash-crumb-name"></span></p>
+                <h2 id="dash-detail-title">Detalle: <span id="dash-detail-name"></span></h2>
+                <p id="dash-detail-summary" class="muted"></p>
+                <p id="dash-detail-format" class="muted dash-detail-format" hidden></p>
+              </div>
+              <button type="button" id="dash-detail-close" class="dash-close" aria-label="Cerrar detalle">✕</button>
+            </div>
+            <div class="table-wrap">
+              <table class="dash-detail-table">
+                <thead>
+                  <tr><th>Fecha</th><th>Folio</th><th class="num">Monto</th></tr>
+                </thead>
+                <tbody id="dash-detail-body"></tbody>
+              </table>
+            </div>
+            <p id="dash-detail-empty" class="empty" hidden>Sin resultados con estos filtros</p>
+          </aside>
         </div>
-        <div class="card">
-          <h2>Total por mes (últimos 6 meses)</h2>
-          <div class="chart-wrap">
-            <canvas id="dash-chart" width="640" height="338"></canvas>
-          </div>
+
+        <section class="card" aria-labelledby="dash-chart-title">
+          <h2 id="dash-chart-title">Total por mes</h2>
+          <p id="dash-chart-hint" class="muted dash-chart-hint">Toca una columna para ver ese mes; toca un segmento para abrir el detalle del solicitante.</p>
+          <div id="dash-chart-wrap" class="dash-canvas"><canvas id="dash-chart" role="img" aria-label="Total activo por mes, segmentado por solicitante"></canvas></div>
           <div id="dash-legend" class="chart-legend"></div>
-          <button
-            type="button"
-            id="dash-legend-toggle"
-            class="link-btn legend-toggle"
-            aria-controls="dash-legend"
-            aria-expanded="false"
-            hidden
-          >
-            Ver todos
-          </button>
-        </div>
+          <p id="dash-chart-empty" class="empty" hidden>Sin resultados con estos filtros</p>
+        </section>
       </section>
 
       <!-- ============ VISTA: ADMIN ============ -->
@@ -374,6 +402,7 @@
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
     <!-- qrcode.js (global window.QRCode); script clásico → se ejecuta antes que el módulo -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script type="module" src="./js/app.js"></script>
   </body>
 </html>
