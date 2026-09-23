@@ -188,3 +188,42 @@ export function assignRequesterColors(directoryNames, allNames) {
   });
   return map;
 }
+
+// ============================================================================
+//  Claridad de alcance  (no cambian NINGUNA cifra: sólo las describen)
+// ============================================================================
+
+/* Etiqueta de "vista filtrada" para las KPI. Sólo habla de las dimensiones
+   Persona y Tipo: el periodo ya se ve en el selector de mes y en su chip, y
+   repetirlo aquí convertiría el aviso en ruido permanente.
+
+   Devuelve null cuando no hay ninguna de las dos dimensiones activas — es
+   decir, cuando las KPI YA son el total del periodo y no hay nada que
+   advertir. Ese null es el que apaga el aviso en la interfaz. */
+export function filterScopeLabel(filters) {
+  const { persona, tipo } = { ...EMPTY_FILTERS, ...filters };
+  const partes = [];
+  if (persona) partes.push(`Persona: ${persona}`);
+  if (tipo) partes.push(`Tipo: ${tipo}`);
+  return partes.length ? "Vista filtrada · " + partes.join(" · ") : null;
+}
+
+/* Lo que el Top NO está mostrando cuando está colapsado.
+
+   Se calcula por DIFERENCIA contra las filas visibles reales (no contra
+   TOP_VISIBLE): el Top mantiene visible al solicitante seleccionado aunque
+   caiga fuera de los primeros puestos, y restar una constante contaría ese
+   vale dos veces. Así `hiddenTotal + visible = total` se cumple siempre, sean
+   cuales sean los filtros, el periodo o el detalle abierto.
+
+   Devuelve null si no hay nadie oculto: entonces el Top ya es completo. */
+export function topHiddenSummary(ranking, visibles) {
+  const mostrados = new Set(visibles.map((r) => r.name));
+  const ocultos = ranking.filter((r) => !mostrados.has(r.name));
+  if (!ocultos.length) return null;
+  return {
+    hiddenCount: ocultos.length,
+    hiddenTotal: ocultos.reduce((s, r) => s + r.total, 0),
+    hiddenVales: ocultos.reduce((s, r) => s + r.count, 0),
+  };
+}

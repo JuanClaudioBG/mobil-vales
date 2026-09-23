@@ -444,6 +444,15 @@ const lineaGris = () => ({ style: "thin", color: { argb: XLS_BORDE } });
 const rellenoSolido = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
 const dosDigitos = (n) => String(n).padStart(2, "0");
 const fechaCorta = (d) => `${dosDigitos(d.getDate())}/${dosDigitos(d.getMonth() + 1)}/${d.getFullYear()}`;
+const horaCorta = (d) => `${dosDigitos(d.getHours())}:${dosDigitos(d.getMinutes())}`;
+
+/* Sello de frescura, con hora. Va en el Dashboard y en CADA hoja de mes.
+   Un libro es una FOTO: el mes en curso sigue creciendo después de
+   descargarlo, así que una hoja sin fecha de corte se compara tarde o
+   temprano contra un Dashboard más nuevo y parece que las cifras no cuadran.
+   Con la hora, además, se distinguen dos descargas del mismo día.
+   Sólo es una etiqueta: no entra en ningún cálculo. */
+export const selloDatosAl = (d) => `Datos al ${fechaCorta(d)} ${horaCorta(d)}`;
 
 /* Banda de ancho completo (título, subtítulo, nota). El estilo se aplica a
    TODAS las celdas del rango y la fusión se hace al final: ExcelJS redirige el
@@ -588,7 +597,7 @@ export function hojaDashboard(wb, metrics, opts = {}) {
     fill: rellenoSolido(XLS_ROJO),
     alignment: { horizontal: "left", vertical: "middle", indent: 1 },
   }, 32);
-  banda(ws, 3, DASH_C1, DASH_C2, `Histórico completo · generado ${fechaCorta(generado)}`, {
+  banda(ws, 3, DASH_C1, DASH_C2, `Histórico completo · ${selloDatosAl(generado)}`, {
     font: { italic: true, size: 10, color: { argb: XLS_TXT_SUAVE } },
     alignment: { horizontal: "left", vertical: "middle", indent: 1 },
     border: { bottom: lineaGris() },
@@ -684,7 +693,9 @@ function tituloMes(clave) {
 /* Hoja de un mes: área de insights arriba y, debajo, la MISMA tabla por
    persona de siempre (nombre, categoría, vales, total y fila TOTAL), con sus
    tintes por categoría y sus anchos automáticos. */
-function hojaMes(wb, clave, valesDelMes, resumen, imagenDonut) {
+function hojaMes(wb, clave, valesDelMes, resumen, imagenDonut, generado = new Date()) {
+  // El NOMBRE de la pestaña no lleva sello: es corto y estable ("Sep 2026"),
+  // y es lo que se usa para navegar el libro. La fecha de corte va dentro.
   const ws = wb.addWorksheet(nombreHojaMes(clave));
   ws.views = [{ showGridLines: false }];
 
@@ -694,6 +705,13 @@ function hojaMes(wb, clave, valesDelMes, resumen, imagenDonut) {
     fill: rellenoSolido(XLS_ROJO),
     alignment: { horizontal: "left", vertical: "middle", indent: 1 },
   }, 28);
+  // Mismo sello que el Dashboard, debajo del título: el mes en curso sigue
+  // creciendo después de exportar y esta hoja es la foto de un instante.
+  r = banda(ws, r, MES_C1, MES_C2, selloDatosAl(generado), {
+    font: { italic: true, size: 10, color: { argb: XLS_TXT_SUAVE } },
+    alignment: { horizontal: "left", vertical: "middle", indent: 1 },
+    border: { bottom: lineaGris() },
+  }, 18);
   ws.getRow(r).height = 6;
   r += 1;
 
@@ -884,7 +902,7 @@ export function construirLibro(ExcelJS, vales, opts = {}) {
   // --- Una hoja por mes con vales, la más reciente primero ---
   const donas = pngs.porMes || {};
   resumenes.forEach(([clave, resumen], i) => {
-    hojaMes(wb, clave, meses[i][1], resumen, registrarImagen(wb, donas[clave]));
+    hojaMes(wb, clave, meses[i][1], resumen, registrarImagen(wb, donas[clave]), generado);
   });
 
   // --- Hoja: Detalle (última), con activos y anulados ---

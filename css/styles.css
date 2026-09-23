@@ -1937,3 +1937,16 @@ tr.inv-row--vencido td {
 #qr-canvas canvas.qr-real {
   image-rendering: auto;
 }
+
+/* Aviso de vista filtrada sobre las KPI del Dashboard. Discreto a propósito:
+   informa del alcance, no alarma. Sólo aparece con Persona y/o Tipo activos. */
+.dash-scope {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}

@@ -22,7 +22,7 @@ import {
   PERSONAS,
   DEPARTAMENTOS,
 } from "./config.js";
-import { money, escapeHtml, todayInput } from "./utils.js";
+import { money, escapeHtml, todayInput, toValidDate, valeDate } from "./utils.js";
 import {
   EMPTY_FILTERS,
   monthRange,
@@ -35,6 +35,8 @@ import {
   aggregateMonthlySeries,
   orderChartRequesters,
   assignRequesterColors,
+  filterScopeLabel,
+  topHiddenSummary,
 } from "./dashboard-data.js";
 import {
   initInventario,
@@ -158,6 +160,7 @@ const dashPersona = $("#dash-persona");
 const dashTipo = $("#dash-tipo");
 const dashChips = $("#dash-chips");
 const dashClear = $("#dash-clear");
+const dashScope = $("#dash-scope");
 const dashCount = $("#dash-count");
 const dashTotal = $("#dash-total");
 const dashTrend = $("#dash-trend");
@@ -1718,6 +1721,11 @@ function renderDashboard() {
   // --- Población filtrada (la MISMA para todos los widgets) --------------
   const filtered = filterDashboardVales(records, f);
   const metrics = calculateDashboardMetrics(filtered);
+  // Aviso de alcance: con Persona o Tipo activos, las KPI de abajo NO son el
+  // total del periodo. Sin esas dimensiones no se muestra nada.
+  const scope = filterScopeLabel(f);
+  dashScope.textContent = scope || "";
+  dashScope.hidden = !scope;
   dashCount.textContent = String(metrics.count);
   dashTotal.textContent = money(metrics.total);
   renderDashTrend(records, metrics.total, presetMonth);
@@ -1789,8 +1797,6 @@ function renderDashTrend(records, total, presetMonth) {
 
 function renderDashTop(ranking, colors) {
   dashTopEmpty.hidden = ranking.length > 0;
-  dashVerTodos.hidden = ranking.length <= TOP_VISIBLE;
-  dashVerTodos.textContent = dashExpanded ? "Ver menos" : `Ver todos (${ranking.length})`;
   const top1 = ranking.length ? ranking[0].total : 0;
   const visibles = dashExpanded ? ranking : ranking.slice(0, TOP_VISIBLE);
   // El seleccionado siempre queda visible aunque esté fuera del top 5.
@@ -1798,6 +1804,25 @@ function renderDashTop(ranking, colors) {
     const sel = ranking.find((r) => r.name === dashDetail);
     if (sel) visibles.push(sel);
   }
+
+  /* El botón de "ver todos" dice lo que el Top NO está mostrando: cuántos
+     solicitantes quedan fuera y por cuánto importe. Un "Ver todos" a secas
+     deja creer que las filas visibles son el periodo completo, que es
+     exactamente la confusión que este cambio quita.
+     Se calcula contra las filas visibles REALES —el seleccionado puede estar
+     entre ellas aunque caiga fuera del top 5—, así que lo oculto más lo
+     visible siempre suma el total de solicitantes del periodo. */
+  const oculto = dashExpanded ? null : topHiddenSummary(ranking, visibles);
+  dashVerTodos.hidden = dashExpanded ? ranking.length <= TOP_VISIBLE : !oculto;
+  dashVerTodos.textContent = dashExpanded
+    ? "Ver menos"
+    : oculto
+      ? `+${oculto.hiddenCount} ${oculto.hiddenCount === 1 ? "solicitante" : "solicitantes"} · ${money(oculto.hiddenTotal)}`
+      : "Ver todos";
+  dashVerTodos.setAttribute(
+    "aria-label",
+    dashExpanded ? "Ver menos solicitantes" : "Ver todos los solicitantes del periodo"
+  );
 
   dashTop.innerHTML = "";
   for (const r of visibles) {
@@ -2061,9 +2086,10 @@ function renderAdmin() {
    La implementación (hojas, estilos, carga diferida de ExcelJS) vive en
    js/excel-export.js. Aquí sólo se normalizan los vales y se maneja el botón. */
 
-/* Vales tal y como los consume el módulo de Excel. La fecha se resuelve aquí
-   porque valeDate() depende de Timestamp de Firestore; así el módulo queda
-   libre de Firebase y se puede probar desde Node.
+/* Vales tal y como los consume el módulo de Excel. La fecha se resuelve aquí,
+   con el MISMO valeDate() que alimenta al Dashboard: así el módulo de Excel
+   recibe fechas ya normalizadas, queda libre de Firebase y se puede probar
+   desde Node.
    A propósito NO se copian qrCode ni batchId: el QR es una credencial
    operativa del vale y no tiene ningún uso analítico en el reporte. */
 function valesParaExcel() {
@@ -2104,9 +2130,15 @@ async function exportExcel() {
 // ===========================================================================
 //  Utilidades
 // ===========================================================================
+/* Conversión de un campo de fecha, endurecida en js/utils.js: una cadena
+   ilegible devuelve null (no un Date inválido), que es lo que deja continuar
+   la cadena de respaldo de valeDate().
+   Se declara como `function` y no como `const`: currentMonthKey() —y con él
+   monthKey() y este toDate()— se llama al EVALUAR el módulo (el valor inicial
+   de los selectores de mes y de dashFilters), muchas líneas por encima de
+   aquí, y un `const` estaría todavía en su zona muerta. */
 function toDate(fecha) {
-  if (!fecha) return null;
-  return fecha instanceof Timestamp ? fecha.toDate() : new Date(fecha);
+  return toValidDate(fecha);
 }
 
 // Sólo los vales NO anulados.
@@ -2114,10 +2146,8 @@ function activos(vales) {
   return vales.filter((v) => !v.anulado);
 }
 
-// Fecha del vale para reportes/filtros: fechaVale (con respaldo a datos viejos).
-function valeDate(v) {
-  return toDate(v.fechaVale) || toDate(v.fecha) || toDate(v.createdAt);
-}
+// Fecha del vale para reportes/filtros: fechaVale → fecha → createdAt.
+// La regla canónica vive en js/utils.js y la comparten Dashboard y Excel.
 
 // Muestra la fecha del vale + (en gris) la hora de registro del sistema.
 function formatFechaVale(v) {

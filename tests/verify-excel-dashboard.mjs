@@ -26,7 +26,7 @@ const leer = (rel) => fs.readFileSync(path.join(RAIZ, rel), "utf8");
 
 const {
   computeExcelMetrics, metricasDelMes, filasDetalle, filasHistorico,
-  valesPorMes, filasDelMes, construirLibro,
+  valesPorMes, filasDelMes, construirLibro, nombreHojaMes, selloDatosAl,
   SIN_NOMBRE, SIN_CATEGORIA, SIN_FECHA,
 } = await import(path.join(RAIZ, "js/excel-export.js"));
 // Los cortocircuitos "sin datos" de las gráficas ocurren ANTES de tocar el
@@ -48,7 +48,8 @@ const eq = (nombre, a, b) =>
 //  un mes cuyo importe activo es 0. Son justo los casos donde las cifras
 //  suelen discrepar entre hojas.
 // ---------------------------------------------------------------------------
-const HOY = new Date(2026, 8, 11); // 11/09/2026
+const HOY = new Date(2026, 8, 11, 10, 15); // 11/09/2026 10:15 (con hora: el
+                                           // sello de frescura la imprime)
 const d = (y, m, dia) => new Date(y, m - 1, dia);
 const vale = (o) => ({
   nombre: "Ana", categoria: "Empleado", monto: 200, fecha: d(2026, 9, 3),
@@ -192,8 +193,8 @@ eq("KPI «vales activos» escrito en la hoja", DASH.celda(6, 2), M.activos);
 eq("KPI «importe total» escrito en la hoja", DASH.celda(6, 4), M.importeTotal);
 eq("KPI «vales anulados» escrito en la hoja", DASH.celda(10, 2), M.anulados);
 eq("KPI «importe del mes» escrito en la hoja", DASH.celda(10, 4), M.mes.actualImporte);
-ok("el subtítulo declara el alcance",
-   String(DASH.celda(3, 2)) === "Histórico completo · generado 11/09/2026", JSON.stringify(DASH.celda(3, 2)));
+ok("el subtítulo declara el alcance y la fecha de corte",
+   String(DASH.celda(3, 2)) === "Histórico completo · Datos al 11/09/2026 10:15", JSON.stringify(DASH.celda(3, 2)));
 eq("el Dashboard sólo incrusta UNA gráfica", DASH.imagenes.length, 1);
 
 console.log("\n3. Los KPI de cada mes salen SÓLO de ese mes");
@@ -206,11 +207,28 @@ for (const [clave, resumen] of RESUMEN) {
 ok("ningún mes incluye importe de otro mes",
    [...RESUMEN.values()].reduce((a, r) => a + r.importe, 0) === M.importeTotal - M.sinFecha.importe);
 const AGO = LIBRO.getWorksheet("Ago 2026");
-eq("hoja Ago 2026: KPI total de vales", AGO.celda(5, 1), RESUMEN.get("2026-08").count);
-eq("hoja Ago 2026: KPI importe del mes", AGO.celda(5, 3), RESUMEN.get("2026-08").importe);
-eq("hoja Ago 2026: KPI top persona", AGO.celda(9, 1), RESUMEN.get("2026-08").topPersona.nombre);
-eq("hoja Ago 2026: KPI categoría principal", AGO.celda(9, 3), RESUMEN.get("2026-08").categoriaPrincipal.categoria);
+// Las KPI del mes bajan una fila respecto al diseño original: debajo del
+// título va ahora el sello de frescura (fila 3).
+eq("hoja Ago 2026: KPI total de vales", AGO.celda(6, 1), RESUMEN.get("2026-08").count);
+eq("hoja Ago 2026: KPI importe del mes", AGO.celda(6, 3), RESUMEN.get("2026-08").importe);
+eq("hoja Ago 2026: KPI top persona", AGO.celda(10, 1), RESUMEN.get("2026-08").topPersona.nombre);
+eq("hoja Ago 2026: KPI categoría principal", AGO.celda(10, 3), RESUMEN.get("2026-08").categoriaPrincipal.categoria);
 ok("el título de la hoja nombra el mes", String(AGO.celda(2, 1)) === "AGOSTO 2026", JSON.stringify(AGO.celda(2, 1)));
+
+// --- Frescura: el libro es una FOTO, y cada hoja lo dice ---------------------
+// Sin esto, un libro descargado hace días se compara contra un Dashboard de
+// hoy y el mes EN CURSO parece descuadrado cuando sólo ha seguido creciendo.
+console.log("\n3b. Sello de frescura en Dashboard y hojas de mes");
+const SELLO = "Datos al 11/09/2026 10:15";
+ok("el Dashboard lleva el sello con hora", String(DASH.celda(3, 2)).endsWith(SELLO));
+for (const [clave] of RESUMEN) {
+  const hoja = LIBRO.getWorksheet(nombreHojaMes(clave));
+  ok(`hoja ${nombreHojaMes(clave)}: sello bajo el título`,
+     String(hoja.celda(3, 1)) === SELLO, JSON.stringify(hoja.celda(3, 1)));
+  ok(`hoja ${nombreHojaMes(clave)}: la pestaña NO lleva la fecha de corte`,
+     !hoja.name.includes("Datos al") && hoja.name === nombreHojaMes(clave), hoja.name);
+}
+eq("el sello se construye con la hora de generación", selloDatosAl(HOY), SELLO);
 
 console.log("\n4. La dona cuadra con el total activo del mes");
 for (const [clave, resumen] of RESUMEN) {
