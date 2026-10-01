@@ -71,6 +71,7 @@ let poolError = null;
 // sólo al abrir la sección, porque arrastra el base64 de todos los QR.
 let todos = [];
 let todosCargados = false;
+let loteSeleccionado = null;
 
 // --- Referencias al DOM (la sección vive en la pestaña de Admin) ------------
 const $ = (sel) => document.querySelector(sel);
@@ -90,6 +91,8 @@ export function initInventario(options) {
     stock: $("#inv-stock"),
     total: $("#inv-total"),
     ultima: $("#inv-ultima"),
+    filtroLote: $("#inv-filtro-lote"),
+    alcance: $("#inv-alcance"),
     filtroStatus: $("#inv-filtro-status"),
     filtroMonto: $("#inv-filtro-monto"),
     body: $("#inv-body"),
@@ -105,6 +108,11 @@ export function initInventario(options) {
   fillOptions(el.filtroMonto, [["", "Todos los montos"]].concat(
     INVENTARIO_MONTOS.map((m) => [String(m), money(m)])
   ));
+  el.filtroStatus.value = "disponible";
+  el.filtroLote.addEventListener("change", () => {
+    loteSeleccionado = el.filtroLote.value;
+    renderInventario();
+  });
   el.filtroStatus.addEventListener("change", renderTabla);
   el.filtroMonto.addEventListener("change", renderTabla);
   el.body.addEventListener("click", onTableClick);
@@ -471,6 +479,9 @@ async function importarPdf(file) {
   );
 
   await Promise.all([cargarTodos(true), refreshPool()]);
+  loteSeleccionado = null;
+  el.filtroStatus.value = "disponible";
+  el.filtroMonto.value = "";
   renderInventario();
 }
 
@@ -526,7 +537,49 @@ export async function renderInventarioAdmin() {
   }
 }
 
+// Las cargas antiguas no tienen un ID de lote: se agrupan por día de
+// importación en Monterrey, independientemente del vencimiento del vale.
+function claveLote(v) {
+  const d = v.importadoEn && v.importadoEn.toDate ? v.importadoEn.toDate() : null;
+  if (!d || !Number.isFinite(d.getTime())) return "sin-fecha";
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Monterrey", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const valor = (tipo) => partes.find((p) => p.type === tipo).value;
+  return `${valor("year")}-${valor("month")}-${valor("day")}`;
+}
+
+function etiquetaLote(clave) {
+  if (clave === "sin-fecha") return "Importaciones sin fecha";
+  return "Importación del " + new Date(clave + "T12:00:00-06:00").toLocaleDateString("es-MX", {
+    timeZone: "America/Monterrey", day: "numeric", month: "long", year: "numeric",
+  });
+}
+
+function valesDelLote() {
+  return loteSeleccionado === "" ? todos : todos.filter((v) => claveLote(v) === loteSeleccionado);
+}
+
+function renderLotes() {
+  const claves = [...new Set(todos.map(claveLote))].sort((a, b) => {
+    if (a === "sin-fecha") return 1;
+    if (b === "sin-fecha") return -1;
+    return b.localeCompare(a);
+  });
+  if (loteSeleccionado === null || (loteSeleccionado !== "" && !claves.includes(loteSeleccionado))) {
+    loteSeleccionado = claves[0] || "";
+  }
+  fillOptions(el.filtroLote, [["", "Todo el inventario"], ...claves.map((clave, i) => [
+    clave, etiquetaLote(clave) + (i === 0 && clave !== "sin-fecha" ? " · Más reciente" : ""),
+  ])]);
+  el.filtroLote.value = loteSeleccionado;
+  el.alcance.textContent = loteSeleccionado === ""
+    ? "Mostrando todas las importaciones. El resumen cuenta los disponibles de todo el inventario."
+    : etiquetaLote(loteSeleccionado) + ". El resumen cuenta los disponibles de esta carga. Los PDF importados el mismo día se agrupan juntos.";
+}
+
 function renderInventario() {
+  renderLotes();
   renderStock();
   renderTabla();
 }
@@ -536,7 +589,7 @@ function renderStock() {
   let total = 0;
 
   for (const monto of INVENTARIO_MONTOS) {
-    const libres = todos.filter(
+    const libres = valesDelLote().filter(
       (v) => Number(v.monto) === monto && statusEfectivo(v) === "disponible"
     ).length;
     total += libres * monto;
@@ -554,7 +607,7 @@ function renderStock() {
 
   // Última importación = importadoEn más reciente.
   let ultima = null;
-  for (const v of todos) {
+  for (const v of valesDelLote()) {
     const d = v.importadoEn && v.importadoEn.toDate ? v.importadoEn.toDate() : null;
     if (d && (!ultima || d > ultima)) ultima = d;
   }
@@ -575,7 +628,8 @@ function renderTabla() {
   const fStatus = el.filtroStatus.value;
   const fMonto = el.filtroMonto.value;
 
-  const filas = todos.filter((v) => {
+  const lote = valesDelLote();
+  const filas = lote.filter((v) => {
     if (fStatus && statusEfectivo(v) !== fStatus) return false;
     if (fMonto && Number(v.monto) !== Number(fMonto)) return false;
     return true;
@@ -621,7 +675,7 @@ function renderTabla() {
   el.empty.textContent = todos.length
     ? "Ningún vale coincide con los filtros."
     : "Aún no hay vales importados. Usa «📥 Importar PDF».";
-  el.count.textContent = `${filas.length} de ${todos.length}`;
+  el.count.textContent = `${filas.length} de ${lote.length} vales de ${loteSeleccionado === "" ? "todo el inventario" : "esta carga"}`;
 }
 
 async function onTableClick(event) {
