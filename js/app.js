@@ -30,6 +30,7 @@ import {
   toValidDate,
   valeDate,
   withRetry,
+  withTimeout,
 } from "./utils.js";
 import {
   EMPTY_FILTERS,
@@ -949,6 +950,28 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/* Confirma un writeBatch con tiempo de espera, pero SIN reintento.
+
+   Sin reintento a propósito: si el primer intento llegó al servidor y sólo se
+   perdió la respuesta, repetirlo duplicaría el vale. Las lecturas se pueden
+   reintentar a ciegas; las escrituras no.
+
+   Y agotar el tiempo NO cancela la escritura: la petición sigue su curso y
+   puede llegar igualmente. Por eso devuelve `incierto` y el mensaje que se
+   enseña pide COMPROBAR antes de repetir, en vez de invitar a reintentar. Un
+   error normal del servidor (permisos, validación, carrera por un folio) sí es
+   concluyente: el lote es atómico, no se guardó nada y repetir es seguro.
+
+   Devuelve { ok } | { ok: false, err, incierto }. */
+async function commitConTiempo(batch) {
+  try {
+    await withTimeout(batch.commit());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, err, incierto: Boolean(err && err.esTimeout) };
+  }
+}
+
 // --- Guardar de verdad (tras confirmar) -------------------------------------
 async function doSave() {
   if (saving || !pendingSave) return; // evita doble envío
@@ -1037,7 +1060,8 @@ async function doSave() {
         qrImageBase64: pick ? pick.qrImageBase64 : null,
       });
     });
-    await batch.commit();
+    const commit = await commitConTiempo(batch);
+    if (!commit.ok) throw commit;
     if (asignados.length) marcarAsignadosLocal(asignados);
 
     const n = items.length;
@@ -1055,9 +1079,16 @@ async function doSave() {
     await loadVales();
     // Tras el toast de éxito, muestra el QR de cada vale del lote.
     openQrModal(savedVales);
-  } catch (err) {
+  } catch (fallo) {
+    // `fallo` puede venir de commitConTiempo() (con la bandera `incierto`) o
+    // ser una excepción cualquiera de la preparación del lote.
+    const err = fallo && fallo.err ? fallo.err : fallo;
     console.error("Error al guardar:", err);
-    formError.textContent = "No se pudieron guardar los vales: " + err.message;
+    formError.textContent = fallo && fallo.incierto
+      ? "Se agotó el tiempo al guardar. Puede que los vales SÍ se hayan " +
+        "guardado: pulsa «Actualizar» y revisa el historial antes de volver a " +
+        "registrarlos."
+      : "No se pudieron guardar los vales: " + (err && err.message ? err.message : err);
     formError.hidden = false;
     closeConfirm();
   } finally {
@@ -1552,11 +1583,28 @@ async function anularVale(vale) {
   );
   if (!ok) return;
 
-  try {
-    // ¿Sigue existiendo el vale de papel? Los folios de pruebas anteriores
-    // pueden haberse borrado; en ese caso se anula el vale y ya está.
-    const devolver = folio ? await existeFolio(folio) : false;
+  /* ¿Sigue existiendo el vale de papel? Los folios de pruebas anteriores
+     pueden haberse borrado; en ese caso se anula el vale y ya está.
 
+     Esta comprobación va FUERA del try del lote y a propósito: si no se puede
+     leer el inventario, se sale sin escribir NADA. Antes existeFolio()
+     devolvía false ante cualquier error, así que un fallo de red se confundía
+     con "ese folio ya no existe", el vale se marcaba anulado y el folio se
+     quedaba en 'asignado' para siempre, apuntando a un vale anulado y sin
+     forma de recuperarlo desde la aplicación. Mejor no anular y que el usuario
+     repita. */
+  let devolver = false;
+  if (folio) {
+    try {
+      devolver = await existeFolio(folio);
+    } catch (err) {
+      console.error("Error al comprobar el folio antes de anular:", err);
+      alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
+      return; // el vale NO se anula
+    }
+  }
+
+  try {
     // Un solo lote: o se anula el vale Y se devuelve el folio, o no pasa nada.
     const batch = writeBatch(db);
     batch.update(doc(db, COLLECTION, id), {
@@ -1564,7 +1612,19 @@ async function anularVale(vale) {
       anuladoEn: serverTimestamp(),
     });
     if (devolver) batch.update(inventarioDocRef(folio), camposDevolucion());
-    await batch.commit();
+
+    const commit = await commitConTiempo(batch);
+    if (!commit.ok) {
+      console.error("Error al anular:", commit.err);
+      // Agotar el tiempo no cancela la escritura: puede haberse anulado igual.
+      alert(
+        commit.incierto
+          ? "Se agotó el tiempo al anular. Puede que SÍ se haya anulado: " +
+            "pulsa «Actualizar» y compruébalo antes de volver a intentarlo."
+          : "No se pudo anular, revisa tu conexión e intenta de nuevo"
+      );
+      return;
+    }
 
     if (devolver) {
       await refrescarInventario();
@@ -1575,7 +1635,7 @@ async function anularVale(vale) {
     await loadVales();
   } catch (err) {
     console.error("Error al anular:", err);
-    alert("No se pudo anular: " + err.message);
+    alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
   }
 }
 

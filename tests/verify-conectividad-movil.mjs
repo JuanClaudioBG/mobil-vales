@@ -172,10 +172,14 @@ test("la lista completa se carga SÓLO al abrir la pestaña Inventario", () => {
   assert.ok(!/cargarTodos/.test(appCode), "app.js no fuerza la carga completa");
 });
 
-test("la tabla de Inventario (Admin) sigue cargando igual que antes", () => {
-  // Requisito explícito: no cambiar lo que ve el usuario en esa tabla.
+test("la tabla de Inventario (Admin) sigue mostrando lo mismo", () => {
+  /* Requisito explícito: no cambiar lo que ve el usuario en esa tabla. Sigue
+     trayendo la colección entera y ordenándola igual; lo único que cambió
+     después (ver tests/verify-anular-conexion.mjs) es que lee del servidor
+     con reintento, para que una conexión mala no la pinte VACÍA. */
   const cargarTodos = extraerFuncion(invCode, "async function cargarTodos(");
-  assert.match(cargarTodos, /getDocs\(inventarioRef\)/);
+  assert.match(cargarTodos, /\(inventarioRef\)/);
+  assert.match(cargarTodos, /todos = snap\.docs\.map/);
   assert.match(cargarTodos, /todos\.sort\(/);
 });
 

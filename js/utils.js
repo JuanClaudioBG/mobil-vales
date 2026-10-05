@@ -84,10 +84,17 @@ export function withTimeout(promise, ms = FIRESTORE_TIMEOUT_MS) {
   return Promise.race([
     Promise.resolve(promise).finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("Tiempo de espera agotado al conectar con Firestore")),
-        ms
-      );
+      timer = setTimeout(() => {
+        const err = new Error("Tiempo de espera agotado al conectar con Firestore");
+        /* Marca para distinguir "se agotó el tiempo" de "el servidor dijo que
+           no". Importa en las ESCRITURAS: agotar el tiempo NO cancela nada, la
+           escritura puede haber llegado igualmente, así que el mensaje tiene
+           que pedir comprobar antes de repetir en vez de invitar a reintentar.
+           Se usa una propiedad propia y no `code` para no alterar el texto del
+           error que ya muestra la app (que incluye err.code entre paréntesis). */
+        err.esTimeout = true;
+        reject(err);
+      }, ms);
     }),
   ]);
 }
