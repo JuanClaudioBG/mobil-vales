@@ -1462,19 +1462,25 @@ async function valeParaModal(v) {
   };
 
   if (modelo.folio) {
-    const res = await qrImagenDeFolio(modelo.folio);
-    if (res.ok && res.imagen) {
-      modelo.qrImageBase64 = res.imagen;
-    } else if (res.ok || res.motivo === "no-existe") {
-      // El vale existe y sus datos son los originales; lo que falta es la
-      // imagen del QR en el inventario.
+    try {
+      const res = await qrImagenDeFolio(modelo.folio);
+      if (res.ok && res.imagen) {
+        modelo.qrImageBase64 = res.imagen;
+      } else {
+        // El vale existe y sus datos son los originales; lo que falta es la
+        // imagen del QR en el inventario. Esto ya es una respuesta DEL
+        // SERVIDOR: el folio no está, o está sin imagen.
+        modelo.avisoQr =
+          "Este vale existe, pero su QR ya no está en el inventario. " +
+          "Usa el folio que aparece abajo.";
+      }
+    } catch (err) {
+      // No se pudo LEER. No es que el vale ni su QR hayan desaparecido, así
+      // que el mensaje tiene que ser otro: antes se confundían los dos casos
+      // y un bache de red hacía creer que el QR se había perdido.
+      console.error("[vales] no se pudo leer el QR del folio", modelo.folio, err);
       modelo.avisoQr =
-        "Este vale existe, pero su QR ya no está en el inventario. " +
-        "Usa el folio que aparece abajo.";
-    } else {
-      // Fallo de lectura: NO es que el vale no exista.
-      modelo.avisoQr =
-        "No se pudo cargar el QR (revisa la conexión e inténtalo de nuevo). " +
+        "No se pudo leer el inventario (revisa la conexión e inténtalo de nuevo). " +
         "El folio de abajo es el original del vale.";
     }
   }

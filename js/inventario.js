@@ -16,7 +16,6 @@ import {
   collection,
   doc,
   getCountFromServer,
-  getDoc,
   getDocFromServer,
   getDocsFromServer,
   limit,
@@ -463,30 +462,32 @@ export async function existeFolio(folio) {
 // basta con leerlo una vez por sesión.
 const qrImagenCache = new Map();
 
-// Imagen del QR (base64) de un folio YA EMITIDO, para volver a mostrar un vale
-// desde el historial. Es SÓLO LECTURA: no toca el status ni ningún otro campo
-// del inventario, y nunca reasigna ni devuelve el folio.
-// Devuelve:
-//   { ok: true, imagen }       imagen puede ser null si el documento no la trae
-//   { ok: false, motivo: "no-existe" }  el folio ya no está en el inventario
-//   { ok: false, motivo: "error" }      no se pudo leer (red/permisos). NO
-//                                       significa que el vale no exista.
+/* Imagen del QR (base64) de un folio YA EMITIDO, para volver a mostrar un vale
+   desde el historial. Es SÓLO LECTURA: no toca el status ni ningún otro campo
+   del inventario, y nunca reasigna ni devuelve el folio.
+
+   Devuelve:
+     { ok: true, imagen }                imagen puede ser null si el documento
+                                         no la trae
+     { ok: false, motivo: "no-existe" }  el folio ya no está en el inventario
+
+   Y LANZA si no se puede leer. Antes devolvía { ok:false, motivo:"error" }, y
+   el aviso que salía ya era el correcto; lo que fallaba era LLEGAR hasta él:
+   el SDK se rendía a los ~10 s y resolvía con la caché local, que en esta app
+   está vacía, así que exists() daba false y el vale se anunciaba como "su QR
+   ya no está en el inventario" cuando en realidad no se había podido leer.
+   Leyendo del servidor, con reintento, y dejando que el fallo suba, los dos
+   casos vuelven a ser distinguibles de verdad.
+
+   Un fallo NO se cachea: el siguiente intento vuelve a preguntar. */
 export async function qrImagenDeFolio(folio) {
   const key = String(folio);
   if (qrImagenCache.has(key)) return qrImagenCache.get(key);
 
-  let resultado;
-  try {
-    const snap = await getDoc(inventarioDocRef(key));
-    resultado = snap.exists()
-      ? { ok: true, imagen: snap.data().qrImageBase64 || null }
-      : { ok: false, motivo: "no-existe" };
-  } catch (err) {
-    console.error("[inventario] no se pudo leer el QR del folio", key, err);
-    // Un fallo de lectura puede ser temporal: no se cachea, para que el
-    // siguiente intento vuelva a preguntar.
-    return { ok: false, motivo: "error" };
-  }
+  const snap = await withRetry(() => getDocFromServer(inventarioDocRef(key)));
+  const resultado = snap.exists()
+    ? { ok: true, imagen: snap.data().qrImageBase64 || null }
+    : { ok: false, motivo: "no-existe" };
 
   qrImagenCache.set(key, resultado);
   return resultado;

@@ -70,11 +70,24 @@ for (const id of PROHIBIDO) {
   test("valeParaModal/Ver no usa " + id, () => assert.ok(!reopen.includes(id)));
   test("qrImagenDeFolio no usa " + id, () => assert.ok(!lookup.includes(id)));
 }
-test("la búsqueda de imagen sólo lee (getDoc)", () => {
-  assert.ok(lookup.includes("getDoc(inventarioDocRef("));
-  // Única API de Firestore permitida aquí: getDoc (+ la referencia al doc).
-  const llamadas = [...lookup.matchAll(/\b(\w*Docs?|\w*DocRef)\s*\(/g)].map((m) => m[1]);
-  assert.deepEqual([...new Set(llamadas)].sort(), ["getDoc", "inventarioDocRef"]);
+test("la búsqueda de imagen sólo lee, y lee del SERVIDOR", () => {
+  assert.ok(lookup.includes("getDocFromServer(inventarioDocRef("));
+  // Única API de Firestore permitida aquí: una lectura puntual (+ la
+  // referencia al doc). getDoc() se conformaba con la caché local —vacía en
+  // esta app— y eso hacía pasar un fallo de red por "el QR ya no está".
+  const llamadas = [...lookup.matchAll(/\b(\w*Docs?|\w*DocRef|\w*FromServer)\s*\(/g)].map((m) => m[1]);
+  assert.deepEqual([...new Set(llamadas)].sort(), ["getDocFromServer", "inventarioDocRef"]);
+});
+test("la búsqueda de imagen reintenta antes de rendirse", () => {
+  assert.match(lookup, /withRetry\(/);
+});
+test("un fallo de lectura NO se cachea", () => {
+  // Si se cacheara, un bache de red dejaría el vale marcado como ilegible el
+  // resto de la sesión. Sólo se guarda lo que respondió el servidor.
+  const i = lookup.indexOf("qrImagenCache.set");
+  const j = lookup.indexOf("const snap");
+  assert.ok(j >= 0 && i > j, "sólo se cachea después de leer de verdad");
+  assert.ok(!/catch/.test(lookup), "ya no se traga el error: lo propaga");
 });
 test("anularVale sólo se enlaza en el botón Anular, no al reabrir", () => {
   const verPath = slice(reopenSrc, "async function abrirValeExistente", "// Celda de acciones");
@@ -110,13 +123,16 @@ const stubEl = () => ({
   className: "", textContent: "", title: "", type: "", disabled: false,
   hijos: [], addEventListener() {}, appendChild(c) { this.hijos.push(c); },
 });
+// `imagenRes` imita a qrImagenDeFolio: o devuelve un resultado, o LANZA (que
+// es lo que hace la función real cuando no puede leer el inventario).
 let imagenRes = { ok: true, imagen: "BASE64REAL" };
+let imagenLanza = null;
 const mod = new Function(
   "valeDate", "qrImagenDeFolio", "document", "openQrModal", "alert", "anularVale",
   reopenSrc + "\nreturn { sePuedeReabrir, fechaValeInputStr, valeParaModal, celdaAcciones };"
 )(
   (v) => (v.fechaVale ? new Date(v.fechaVale) : null),
-  async () => imagenRes,
+  async () => { if (imagenLanza) throw imagenLanza; return imagenRes; },
   { createElement: stubEl },
   () => {}, () => {}, () => {}
 );
@@ -175,17 +191,49 @@ test("5b. el vale anulado sólo ofrece Ver", () => {
   assert.deepEqual(celda.hijos[0].hijos.map((b) => b.textContent), ["Ver"]);
 });
 test("8a. folio sin imagen: aviso, sin QR y sin reemplazo", async () => {
+  imagenLanza = null;
   imagenRes = { ok: false, motivo: "no-existe" };
   const m = await mod.valeParaModal(activoFolio);
   assert.equal(m.qrImageBase64, null);
   assert.match(m.avisoQr, /ya no está en el inventario/);
   assert.equal(m.folio, "1052"); // el folio original se conserva
 });
-test("8b. fallo de lectura: mensaje distinto de 'no existe'", async () => {
-  imagenRes = { ok: false, motivo: "error" };
+test("8a-bis. folio presente pero sin imagen: mismo aviso que 'no existe'", async () => {
+  imagenLanza = null;
+  imagenRes = { ok: true, imagen: null };
   const m = await mod.valeParaModal(activoFolio);
-  assert.match(m.avisoQr, /conexión/);
+  assert.equal(m.qrImageBase64, null);
+  assert.match(m.avisoQr, /ya no está en el inventario/);
+});
+test("8b. fallo de lectura: NO se pudo leer, no 'ya no está'", async () => {
+  /* Los dos casos tienen que seguir distinguiéndose: "el servidor dice que el
+     QR no está" no es lo mismo que "no he podido preguntárselo". */
+  imagenLanza = Object.assign(new Error("Failed to get document from server."), {
+    code: "unavailable",
+  });
+  const m = await mod.valeParaModal(activoFolio);
+  assert.match(m.avisoQr, /No se pudo leer el inventario/);
   assert.doesNotMatch(m.avisoQr, /ya no está en el inventario/);
+  assert.equal(m.folio, "1052"); // el folio original se conserva igualmente
+  assert.equal(m.qrImageBase64, null);
+  assert.equal(m.anulado, false);
+});
+test("8c. los dos avisos son textos distintos", async () => {
+  imagenLanza = null;
+  imagenRes = { ok: false, motivo: "no-existe" };
+  const noExiste = (await mod.valeParaModal(activoFolio)).avisoQr;
+  imagenLanza = new Error("sin red");
+  const falloLectura = (await mod.valeParaModal(activoFolio)).avisoQr;
+  assert.notEqual(noExiste, falloLectura);
+  imagenLanza = null;
+});
+test("8d. un fallo de lectura no rompe el modal", async () => {
+  // valeParaModal tiene que resolver igual: el vale se sigue pudiendo ver.
+  imagenLanza = new Error("sin red");
+  const m = await mod.valeParaModal(activoFolio);
+  assert.equal(m.qrCode, "COMBUSA-1052");
+  assert.equal(m.vencimiento, "2026-12-31");
+  imagenLanza = null;
 });
 
 // Los tests async se encadenan al final para que el resumen salga después.
