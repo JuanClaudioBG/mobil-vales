@@ -130,6 +130,8 @@ const confirmModal = $("#confirm-modal");
 const cPersona = $("#c-persona");
 const cCategoria = $("#c-categoria");
 const cVales = $("#c-vales");
+const cFolios = $("#c-folios");
+const cFoliosRow = $("#c-folios-row");
 const cTotal = $("#c-total");
 const cFecha = $("#c-fecha");
 const cRegistrado = $("#c-registrado");
@@ -801,7 +803,7 @@ valeForm.addEventListener("submit", async (e) => {
   }
 
   pendingSave = { base, items, picks: revision.picks };
-  openConfirm(base, items);
+  openConfirm(base, items, revision.picks);
 });
 
 /* Comprueba el inventario y RESERVA los folios del registro.
@@ -878,10 +880,15 @@ function validarBase(d) {
 }
 
 // --- Modal de confirmación --------------------------------------------------
-function openConfirm(base, items) {
+// `picks` son los folios YA reservados (uno por vale, null si esa denominación
+// no sale del inventario). Antes de este cambio el folio no se sabía hasta
+// después de guardar; ahora se reserva antes de confirmar, así que se puede
+// enseñar cuál es el vale de papel que se va a entregar.
+function openConfirm(base, items, picks) {
   cPersona.textContent = base.nombre;
   cCategoria.textContent = base.categoria;
   cVales.textContent = resumenVales(items);
+  mostrarFolios(picks);
   cTotal.textContent = money(sum(items));
   cFecha.textContent = parseDateInput(base.fechaValeStr).toLocaleDateString("es-MX", {
     day: "2-digit",
@@ -894,6 +901,24 @@ function openConfirm(base, items) {
 
 function closeConfirm() {
   confirmModal.hidden = true;
+}
+
+// Folios reservados, en la misma confirmación. Si ningún vale sale del
+// inventario (denominación fuera de INVENTARIO_MONTOS) la fila se oculta en
+// vez de enseñar un hueco vacío.
+const MAX_FOLIOS_VISIBLES = 10;
+
+function mostrarFolios(picks) {
+  const folios = (picks || []).filter(Boolean).map((p) => formatFolio(p.folio));
+  if (folios.length === 0) {
+    cFoliosRow.hidden = true;
+    cFolios.textContent = "";
+    return;
+  }
+  const visibles = folios.slice(0, MAX_FOLIOS_VISIBLES);
+  const resto = folios.length - visibles.length;
+  cFolios.textContent = visibles.join(", ") + (resto > 0 ? ` y ${resto} más` : "");
+  cFoliosRow.hidden = false;
 }
 
 // Agrupa items en "$200 ×2, $500 ×1"
