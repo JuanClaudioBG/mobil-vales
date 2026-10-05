@@ -16,8 +16,7 @@ import {
   collection,
   doc,
   getCountFromServer,
-  getDoc,
-  getDocs,
+  getDocFromServer,
   getDocsFromServer,
   limit,
   query,
@@ -129,7 +128,12 @@ export function initInventario(options) {
 
   el.importBtn.addEventListener("click", onImportClick);
   el.fileInput.addEventListener("change", onFileChosen);
-  el.refreshBtn.addEventListener("click", () => cargarTodos(true).then(renderInventario));
+  // Pasa por renderInventarioAdmin() —y no por cargarTodos() a secas— porque
+  // es quien tiene el catch que pinta el error. Antes era `.then()` pelado: con
+  // getDocs() la lectura nunca fallaba (se resolvía con la caché), pero ahora
+  // que lee del servidor sí puede, y un fallo se habría perdido en una promesa
+  // rechazada sin capturar, dejando la tabla callada.
+  el.refreshBtn.addEventListener("click", () => renderInventarioAdmin(true));
 
   // Carga en segundo plano del pool de asignación: no bloquea la interfaz.
   ensurePool().catch((err) => console.error("[inventario] pool:", err));
@@ -221,10 +225,19 @@ function refreshStock() {
   return stockPromise;
 }
 
-// Lista completa para la tabla de Admin.
+/* Lista completa para la tabla de Admin. Se sigue cargando SÓLO al abrir la
+   pestaña Inventario y sigue trayendo lo mismo que antes: esto no cambia lo
+   que se ve en la tabla.
+
+   Lo que cambia es el modo de leer. Con getDocs(), una conexión mala no daba
+   error: el SDK se rendía a los ~10 s y resolvía con la caché local, que en
+   esta app está vacía (no hay persistencia), así que la tabla aparecía VACÍA
+   —"aún no hay vales importados"— en vez de avisar del problema. Leyendo del
+   servidor y con un reintento, o se carga de verdad o salta al catch de
+   renderInventarioAdmin(), que ya pinta el error. */
 async function cargarTodos(force = false) {
   if (todosCargados && !force) return todos;
-  const snap = await getDocs(inventarioRef);
+  const snap = await withRetry(() => getDocsFromServer(inventarioRef));
   todos = snap.docs.map((d) => ({ folio: d.id, ...d.data() }));
   todos.sort((a, b) => Number(a.folio) - Number(b.folio));
   todosCargados = true;
@@ -422,17 +435,26 @@ export function camposDevolucion() {
   };
 }
 
-// ¿Existe el documento de inventario de este folio? Los vales de pruebas
-// antiguas traen folios que ya no están en la colección: en ese caso se anula
-// el vale sin tocar el inventario.
+/* ¿Existe el documento de inventario de este folio? Los vales de pruebas
+   antiguas traen folios que ya no están en la colección: en ese caso se anula
+   el vale sin tocar el inventario.
+
+   LANZA si no se puede leer, y eso es deliberado. Antes devolvía false ante
+   cualquier error, de modo que un fallo de red se confundía con "este folio ya
+   no existe": al anular, el vale se marcaba anulado y el folio se quedaba para
+   siempre en 'asignado', apuntando a un vale anulado. Esa combinación no se
+   puede deshacer desde la aplicación —un vale anulado ya no ofrece Anular, y
+   Aprobar sólo pasa de 'revision_requerida' a 'disponible'—, así que había que
+   arreglarla a mano en la consola de Firebase.
+
+   getDocFromServer por la misma razón que en el resto: getDoc() se conforma
+   con la caché local, y como la app no activa persistencia esa caché está
+   vacía en cada carga, así que sin red habría devuelto "no existe" en vez de
+   fallar. Un documento ausente SÍ se distingue de un fallo de lectura: el
+   servidor responde con un snapshot cuyo exists() es false. */
 export async function existeFolio(folio) {
-  try {
-    const snap = await getDoc(inventarioDocRef(folio));
-    return snap.exists();
-  } catch (err) {
-    console.error("[inventario] no se pudo comprobar el folio", folio, err);
-    return false;
-  }
+  const snap = await withRetry(() => getDocFromServer(inventarioDocRef(folio)));
+  return snap.exists();
 }
 
 // Caché en memoria del QR de los folios que se han vuelto a consultar desde el
@@ -440,30 +462,32 @@ export async function existeFolio(folio) {
 // basta con leerlo una vez por sesión.
 const qrImagenCache = new Map();
 
-// Imagen del QR (base64) de un folio YA EMITIDO, para volver a mostrar un vale
-// desde el historial. Es SÓLO LECTURA: no toca el status ni ningún otro campo
-// del inventario, y nunca reasigna ni devuelve el folio.
-// Devuelve:
-//   { ok: true, imagen }       imagen puede ser null si el documento no la trae
-//   { ok: false, motivo: "no-existe" }  el folio ya no está en el inventario
-//   { ok: false, motivo: "error" }      no se pudo leer (red/permisos). NO
-//                                       significa que el vale no exista.
+/* Imagen del QR (base64) de un folio YA EMITIDO, para volver a mostrar un vale
+   desde el historial. Es SÓLO LECTURA: no toca el status ni ningún otro campo
+   del inventario, y nunca reasigna ni devuelve el folio.
+
+   Devuelve:
+     { ok: true, imagen }                imagen puede ser null si el documento
+                                         no la trae
+     { ok: false, motivo: "no-existe" }  el folio ya no está en el inventario
+
+   Y LANZA si no se puede leer. Antes devolvía { ok:false, motivo:"error" }, y
+   el aviso que salía ya era el correcto; lo que fallaba era LLEGAR hasta él:
+   el SDK se rendía a los ~10 s y resolvía con la caché local, que en esta app
+   está vacía, así que exists() daba false y el vale se anunciaba como "su QR
+   ya no está en el inventario" cuando en realidad no se había podido leer.
+   Leyendo del servidor, con reintento, y dejando que el fallo suba, los dos
+   casos vuelven a ser distinguibles de verdad.
+
+   Un fallo NO se cachea: el siguiente intento vuelve a preguntar. */
 export async function qrImagenDeFolio(folio) {
   const key = String(folio);
   if (qrImagenCache.has(key)) return qrImagenCache.get(key);
 
-  let resultado;
-  try {
-    const snap = await getDoc(inventarioDocRef(key));
-    resultado = snap.exists()
-      ? { ok: true, imagen: snap.data().qrImageBase64 || null }
-      : { ok: false, motivo: "no-existe" };
-  } catch (err) {
-    console.error("[inventario] no se pudo leer el QR del folio", key, err);
-    // Un fallo de lectura puede ser temporal: no se cachea, para que el
-    // siguiente intento vuelva a preguntar.
-    return { ok: false, motivo: "error" };
-  }
+  const snap = await withRetry(() => getDocFromServer(inventarioDocRef(key)));
+  const resultado = snap.exists()
+    ? { ok: true, imagen: snap.data().qrImageBase64 || null }
+    : { ok: false, motivo: "no-existe" };
 
   qrImagenCache.set(key, resultado);
   return resultado;
@@ -645,10 +669,10 @@ function hideError() {
 // ===========================================================================
 //  Interfaz: tarjetas de stock + tabla
 // ===========================================================================
-export async function renderInventarioAdmin() {
+export async function renderInventarioAdmin(force = false) {
   try {
     hideError();
-    await cargarTodos();
+    await cargarTodos(force);
     renderInventario();
   } catch (err) {
     console.error("[inventario] carga:", err);

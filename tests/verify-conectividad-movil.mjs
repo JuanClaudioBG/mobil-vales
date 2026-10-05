@@ -164,10 +164,22 @@ test("el qrImageBase64 se descarga sólo con el folio que se asigna", () => {
   assert.match(reservar, /candidatos\(monto, cantidad\)/);
 });
 
-test("la tabla de Inventario (Admin) sigue cargando igual que antes", () => {
-  // Requisito explícito: no cambiar lo que ve el usuario en esa tabla.
+test("la lista completa se carga SÓLO al abrir la pestaña Inventario", () => {
+  assert.match(appCode, /if \(target === "inventario"\) renderInventarioAdmin\(\);/);
+  // Y no desde el arranque: unlock() sólo conecta el inventario, no lo lista.
+  const unlock = extraerFuncion(appCode, "function unlock(");
+  assert.ok(!/renderInventarioAdmin/.test(unlock), "no se lista al entrar a la app");
+  assert.ok(!/cargarTodos/.test(appCode), "app.js no fuerza la carga completa");
+});
+
+test("la tabla de Inventario (Admin) sigue mostrando lo mismo", () => {
+  /* Requisito explícito: no cambiar lo que ve el usuario en esa tabla. Sigue
+     trayendo la colección entera y ordenándola igual; lo único que cambió
+     después (ver tests/verify-anular-conexion.mjs) es que lee del servidor
+     con reintento, para que una conexión mala no la pinte VACÍA. */
   const cargarTodos = extraerFuncion(invCode, "async function cargarTodos(");
-  assert.match(cargarTodos, /getDocs\(inventarioRef\)/);
+  assert.match(cargarTodos, /\(inventarioRef\)/);
+  assert.match(cargarTodos, /todos = snap\.docs\.map/);
   assert.match(cargarTodos, /todos\.sort\(/);
 });
 
@@ -306,6 +318,50 @@ test("doSave() consume la reserva; ya no vuelve a elegir folios", () => {
   );
   // El QR de prueba sólo puede salir cuando NO hay folio reservado.
   assert.match(doSave, /pick \? `COMBUSA-\$\{pick\.folio\}` : makeQrCode\(anio\)/);
+});
+
+test("el modal de confirmación enseña el folio reservado", () => {
+  /* Sólo es posible porque la reserva ocurre ANTES de confirmar: así quien
+     registra ve qué vale de papel va a entregar, y puede cotejarlo. */
+  const html = fs.readFileSync("index.html", "utf8");
+  assert.match(html, /id="c-folios-row"[^>]*hidden/, "la fila arranca oculta");
+  assert.match(html, /id="c-folios"/);
+
+  const abrir = extraerFuncion(appCode, "function openConfirm(");
+  assert.match(abrir, /openConfirm\(base, items, picks\)/);
+  assert.match(abrir, /mostrarFolios\(picks\)/);
+  // Y se le pasan los folios de verdad desde el envío del formulario.
+  assert.match(appCode, /openConfirm\(base, items, revision\.picks\)/);
+});
+
+await testAsync("mostrarFolios: formatea, recorta y se oculta sin folios", async () => {
+  const fuente = extraerFuncion(appCode, "function mostrarFolios(");
+  const fila = { hidden: false };
+  const celda = { textContent: "" };
+  const fabrica = new Function(
+    "cFolios", "cFoliosRow", "formatFolio", "MAX_FOLIOS_VISIBLES",
+    `${fuente}; return mostrarFolios;`
+  );
+  const mostrarFolios = fabrica(celda, fila, (f) => Number(f).toLocaleString("es-MX"), 10);
+
+  // Sin folios (denominación fuera del inventario): fila oculta.
+  mostrarFolios([null, null]);
+  assert.equal(fila.hidden, true);
+  assert.equal(celda.textContent, "");
+
+  // Un folio: se enseña con el formato de Combusa.
+  mostrarFolios([{ folio: "117765" }]);
+  assert.equal(fila.hidden, false);
+  assert.equal(celda.textContent, "117,765");
+
+  // Varios, incluyendo un hueco sin inventario.
+  mostrarFolios([{ folio: "117765" }, null, { folio: "117766" }]);
+  assert.equal(celda.textContent, "117,765, 117,766");
+
+  // Muchos: se recorta para no desbordar el modal en móvil.
+  mostrarFolios(Array.from({ length: 14 }, (_, i) => ({ folio: String(117765 + i) })));
+  assert.match(celda.textContent, / y 4 más$/);
+  assert.equal(celda.textContent.split(", ").length, 10);
 });
 
 test("el QR de prueba sigue existiendo sólo para montos sin inventario", () => {
