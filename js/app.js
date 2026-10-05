@@ -3,10 +3,10 @@
 // ============================================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
-  getFirestore,
+  initializeFirestore,
   collection,
   doc,
-  getDocs,
+  getDocsFromServer,
   serverTimestamp,
   writeBatch,
   Timestamp,
@@ -19,10 +19,18 @@ import {
   COLLECTION,
   CATEGORIAS,
   MONTOS,
+  INVENTARIO_MONTOS,
   PERSONAS,
   DEPARTAMENTOS,
 } from "./config.js";
-import { money, escapeHtml, todayInput, toValidDate, valeDate } from "./utils.js";
+import {
+  money,
+  escapeHtml,
+  todayInput,
+  toValidDate,
+  valeDate,
+  withRetry,
+} from "./utils.js";
 import {
   EMPTY_FILTERS,
   monthRange,
@@ -43,8 +51,9 @@ import {
   ensurePool,
   renderInventarioAdmin,
   montoRequiereInventario,
-  disponiblesPorMonto,
-  tomarFolios,
+  inventarioIlegible,
+  stockDisponible,
+  reservarFolios,
   inventarioDocRef,
   camposAsignacion,
   camposDevolucion,
@@ -57,7 +66,22 @@ import {
 
 // --- Inicialización de Firebase --------------------------------------------
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+
+/* initializeFirestore(…) en vez de getFirestore(app) por una sola opción:
+   experimentalAutoDetectLongPolling.
+
+   Por defecto el SDK habla con Firestore por un stream (WebChannel). En Safari
+   de iPhone con datos móviles —5G con señal débil, cambios de celda, CGNAT—
+   ese stream se abre y se queda A MEDIAS: no da error, simplemente no llegan
+   datos, y la lectura agotaba el tiempo de espera. Con la detección automática
+   el SDK se da cuenta de que el stream no progresa y cae a long polling
+   (peticiones HTTP normales), que esas redes sí atraviesan.
+
+   En la versión que usa la app (10.12.0) el valor por defecto es false —lo
+   verificamos en el propio bundle—, así que esto es un cambio real y no un
+   no-op. Tiene que ser lo PRIMERO que se hace con Firestore: llamarlo después
+   de la primera lectura lanzaría una excepción. */
+const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 const valesRef = collection(db, COLLECTION);
 
 // --- Referencias al DOM -----------------------------------------------------
@@ -223,6 +247,24 @@ function showAppError(msg) {
 }
 function clearAppError() {
   appError.hidden = true;
+}
+
+// --- Aviso de conexión lenta (mientras se reintenta) ----------------------
+// Reutiliza la caja neutra de "Conectando con la base de datos…": es un aviso
+// informativo, NO el error rojo. El error sólo aparece si el reintento falla.
+const LOADING_TEXTO = loadingEl ? loadingEl.textContent : "";
+
+function showSlowNotice() {
+  if (!loadingEl) return;
+  loadingEl.textContent = "Conexión lenta, reintentando…";
+  loadingEl.classList.add("loading--slow");
+  loadingEl.hidden = false;
+}
+
+function hideSlowNotice() {
+  if (!loadingEl) return;
+  loadingEl.classList.remove("loading--slow");
+  loadingEl.textContent = LOADING_TEXTO;
 }
 
 // --- Detección de nuevas versiones y recarga automática --------------------
@@ -649,7 +691,7 @@ function renderCart() {
   carritoResumen.hidden = carrito.size === 0;
 }
 
-// --- Cargar los vales una sola vez (getDocs) --------------------------------
+// --- Cargar los vales una sola vez (lectura puntual) ------------------------
 // Usamos una lectura puntual en lugar de onSnapshot: el canal de streaming en
 // tiempo real puede quedarse "colgado" tras algunos firewalls/VPN/extensiones,
 // mientras que una lectura puntual falla de forma explícita. El botón
@@ -664,7 +706,22 @@ async function loadVales() {
     // los documentos que no tienen ese campo. Los vales antiguos usan 'fecha'
     // y los nuevos 'fechaVale', así que traemos todos y ordenamos en el cliente
     // por valeDate() (fechaVale → fecha → createdAt).
-    const snapshot = await withTimeout(getDocs(valesRef), 15000);
+    // Un reintento automático antes de dar la cara: en datos móviles el primer
+    // intento se queda colgado a menudo y el segundo entra sin problema. El
+    // error rojo sólo se pinta si el reintento TAMBIÉN falla.
+    //
+    // getDocsFromServer y NO getDocs, por la misma razón que en el inventario:
+    // getDocs() se RINDE a los 10 s y resuelve con la caché local en vez de
+    // fallar. Y como la app no activa persistencia, esa caché está vacía en
+    // cada carga nueva, así que en una red móvil lenta la pantalla se quedaba
+    // con el historial VACÍO, sin aviso y sin error: parecía que no había
+    // vales. Además nunca llegaba a fallar, de modo que ni el reintento ni el
+    // mensaje de abajo se habrían activado jamás. Leyendo del servidor, una
+    // conexión colgada falla de verdad y entonces sí hay reintento y aviso.
+    const snapshot = await withRetry(() => getDocsFromServer(valesRef), {
+      onRetry: showSlowNotice,
+      onSettled: hideSlowNotice,
+    });
     allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     allVales.sort((a, b) => {
       const ta = valeDate(a) ? valeDate(a).getTime() : 0;
@@ -691,18 +748,6 @@ async function loadVales() {
   }
 }
 
-// Rechaza si la promesa no se resuelve dentro de `ms` (evita cuelgues indefinidos).
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error("Tiempo de espera agotado al conectar con Firestore")),
-        ms
-      )
-    ),
-  ]);
-}
 
 // Botones de recarga manual (Historial y Dashboard). loadVales() vuelve a
 // pintar historial, dashboard y admin, así que ambos respetan los filtros y el
@@ -746,24 +791,39 @@ valeForm.addEventListener("submit", async (e) => {
   }
 
   // Cada vale tiene que respaldarse con un folio real del inventario de
-  // Combusa. Se comprueba ANTES de confirmar para no dejar el registro a medias.
-  const faltaInventario = await revisarInventario(items);
-  if (faltaInventario) {
-    formError.textContent = faltaInventario;
+  // Combusa. Se comprueba y se RESERVA antes de confirmar, para no dejar el
+  // registro a medias ni emitir nada sin folio.
+  const revision = await revisarInventario(items);
+  if (revision.problema) {
+    formError.textContent = revision.problema;
     formError.hidden = false;
     return;
   }
 
-  pendingSave = { base, items };
+  pendingSave = { base, items, picks: revision.picks };
   openConfirm(base, items);
 });
 
-// Devuelve un mensaje de aviso si no hay folios suficientes, o null si todo bien.
+/* Comprueba el inventario y RESERVA los folios del registro.
+   Devuelve { problema } con el mensaje a mostrar, o { picks } con un folio por
+   vale (null donde esa denominación no sale del inventario). */
 async function revisarInventario(items) {
-  // ensurePool() nunca falla: si el inventario no se puede leer, queda vacío y
-  // montoRequiereInventario() devuelve false, así que el registro sigue como
-  // antes (QR generado) en lugar de bloquearse.
   await ensurePool();
+
+  // ------------------------------------------------------------------
+  //  SEGURIDAD: inventario ilegible ⇒ NO se registra, no se improvisa.
+  // ------------------------------------------------------------------
+  //  Antes, si el inventario no se podía leer, montoRequiereInventario()
+  //  devolvía false para todo y el registro seguía adelante con el QR de
+  //  prueba SPECTRO-FUEL: se emitían vales de $200/$300/$500/$1000 sin folio
+  //  real de Combusa, imposibles de distinguir en la gasolinera. Un timeout de
+  //  red convertía además un "sin existencias" legítimo en un vale falso.
+  //  Ahora se bloquea: más vale no registrar que registrar algo que no vale.
+  //  El QR generado queda SÓLO para denominaciones fuera de INVENTARIO_MONTOS.
+  const deInventario = items.filter((m) => INVENTARIO_MONTOS.includes(Number(m)));
+  if (inventarioIlegible() && deInventario.length > 0) {
+    return { problema: "No se pudo leer el inventario, intenta de nuevo" };
+  }
 
   // Cuántos se piden de cada denominación que sale del inventario.
   const pedidos = new Map();
@@ -772,9 +832,12 @@ async function revisarInventario(items) {
     pedidos.set(monto, (pedidos.get(monto) || 0) + 1);
   }
 
+  // Aviso temprano con las existencias que ya están contadas (sin descargar
+  // folios). Es un tope superior —no descuenta vencidos—, así que si pasa este
+  // filtro todavía puede faltar algo; lo confirma la reserva de abajo.
   const avisos = [];
   for (const [monto, cantidad] of [...pedidos].sort((a, b) => a[0] - b[0])) {
-    const libres = disponiblesPorMonto(monto).length;
+    const libres = stockDisponible(monto);
     if (libres >= cantidad) continue;
     avisos.push(
       libres === 0
@@ -782,8 +845,28 @@ async function revisarInventario(items) {
         : `⚠️ Sólo quedan ${libres} vales de ${money(monto)} en inventario (pediste ${cantidad})`
     );
   }
-  if (avisos.length === 0) return null;
-  return avisos.join(". ") + ". Importa el PDF de Combusa en la pestaña Admin.";
+  if (avisos.length > 0) {
+    return { problema: avisos.join(". ") + ". Importa el PDF de Combusa en la pestaña Admin." };
+  }
+
+  // Reserva de verdad: una ventana con limit() por denominación, en vez del
+  // pool completo. Trae ya el qrImageBase64 de los folios elegidos.
+  const { picks, faltantes, error } = await reservarFolios(items);
+  if (error) {
+    return { problema: "No se pudo leer el inventario, intenta de nuevo" };
+  }
+  if (Object.keys(faltantes).length > 0) {
+    const detalle = Object.keys(faltantes)
+      .sort((a, b) => a - b)
+      .map((m) => money(m))
+      .join(", ");
+    return {
+      problema:
+        `⚠️ Sin inventario de ${detalle} disponible (puede haber folios vencidos). ` +
+        "Importa el PDF de Combusa en la pestaña Admin.",
+    };
+  }
+  return { picks };
 }
 
 function validarBase(d) {
@@ -846,7 +929,7 @@ async function doSave() {
   if (saving || !pendingSave) return; // evita doble envío
   saving = true;
 
-  const { base, items } = pendingSave;
+  const { base, items, picks } = pendingSave;
   const fechaVale = Timestamp.fromDate(parseDateInput(base.fechaValeStr));
   // batchId único: permite detectar/depurar envíos duplicados.
   const batchId = uuid();
@@ -858,9 +941,17 @@ async function doSave() {
   // Vales guardados en este lote, para mostrar sus QR tras el registro.
   const savedVales = [];
 
-  // Folios reales del inventario, uno por vale (null si esa denominación no
-  // sale del inventario).
-  const { picks, faltantes } = tomarFolios(items);
+  // Los folios ya se reservaron en revisarInventario(), antes de abrir la
+  // confirmación; aquí sólo se comprueba que la reserva siga completa. Si otro
+  // dispositivo se llevó un folio entre la reserva y este commit, el lote falla
+  // entero por firestore.rules (invIsAssignment() exige 'disponible'), así que
+  // nunca se guarda un vale sin su folio.
+  const faltantes = {};
+  items.forEach((monto, i) => {
+    if (montoRequiereInventario(monto) && !(picks && picks[i])) {
+      faltantes[monto] = (faltantes[monto] || 0) + 1;
+    }
+  });
   if (Object.keys(faltantes).length > 0) {
     // El inventario cambió entre la confirmación y el guardado (otro registro
     // se llevó los folios). Mejor abortar que guardar vales sin respaldo.
@@ -877,7 +968,7 @@ async function doSave() {
     formError.hidden = false;
     return;
   }
-  const foliosAsignados = [];
+  const asignados = []; // picks asignados: marcarAsignadosLocal() necesita el monto
 
   try {
     const anio = parseDateInput(base.fechaValeStr).getFullYear();
@@ -907,7 +998,7 @@ async function doSave() {
         // El vale del inventario pasa a "asignado" en el MISMO lote: o se
         // guarda todo, o no se guarda nada.
         batch.update(inventarioDocRef(pick.folio), camposAsignacion(base.nombre, batchId));
-        foliosAsignados.push(pick.folio);
+        asignados.push(pick);
       }
       batch.set(ref, docData);
       savedVales.push({
@@ -922,7 +1013,7 @@ async function doSave() {
       });
     });
     await batch.commit();
-    if (foliosAsignados.length) marcarAsignadosLocal(foliosAsignados);
+    if (asignados.length) marcarAsignadosLocal(asignados);
 
     const n = items.length;
     const total = sum(items);
@@ -1272,7 +1363,7 @@ function uuid() {
 //  mostrar a partir de lo que hay guardado.
 //
 //  Es SÓLO LECTURA. No emite nada ni toca nada: no llama a makeQrCode(),
-//  tomarFolios(), writeBatch() ni a ninguna escritura de Firestore, así que el
+//  reservarFolios(), writeBatch() ni a ninguna escritura de Firestore, así que el
 //  código, el folio, el estado del inventario y las fechas del vale quedan
 //  exactamente como estaban.
 // ===========================================================================

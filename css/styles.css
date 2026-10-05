@@ -888,6 +888,14 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   text-align: center;
 }
 
+/* Reintento en curso: ámbar, para que se distinga del error rojo (.app-error)
+   sin alarmar. Ver showSlowNotice() en js/app.js. */
+.loading--slow {
+  background: #3a2f16;
+  border-color: #b8860b;
+  color: #ffe9b0;
+}
+
 /* --- Pestañas / navegación ------------------------------------------ */
 .tabs {
   display: flex;

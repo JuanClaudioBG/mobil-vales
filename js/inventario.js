@@ -15,8 +15,10 @@
 import {
   collection,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
+  getDocsFromServer,
   limit,
   query,
   serverTimestamp,
@@ -30,7 +32,7 @@ import {
   INVENTARIO_MONTOS,
   INVENTARIO_STATUS,
 } from "./config.js";
-import { escapeHtml, money, todayInput } from "./utils.js";
+import { escapeHtml, money, todayInput, withRetry } from "./utils.js";
 import { extractVouchersFromPdf } from "./pdf-vales.js";
 
 // Vales por lote de escritura. 50 documentos ≈ 250KB por petición: muy por
@@ -53,18 +55,26 @@ let db = null;
 let inventarioRef = null;
 let deps = {};
 
-// Pool de asignación: sólo los vales `disponible` (es lo único que necesita la
-// pestaña de Registro). Se carga en segundo plano al entrar a la app.
-let disponibles = [];
-let poolPromise = null;
+// Existencias por denominación: monto -> nº de folios con status "disponible".
+// Es un COUNT del servidor (~150 bytes por denominación), NO la lista de
+// folios: entrar a la app ya no descarga ningún `qrImageBase64`. Antes se
+// traía el pool entero (110 documentos ≈ 660KB de base64) sólo para contar
+// existencias y elegir el siguiente folio, y eso es lo que ahogaba la conexión
+// en datos móviles. Los folios concretos se piden uno a uno al asignar, con
+// limit(), en reservarFolios().
+let stock = new Map();
+let inventarioTotal = 0;
+let stockPromise = null;
 
 // ¿Existe ALGÚN vale en el inventario? Distingue "nunca se ha importado nada"
 // (la app sigue funcionando como antes) de "se agotó esta denominación".
 let inventarioUsado = false;
 
-// Último error al leer el inventario (p. ej. reglas sin desplegar). Si el
-// inventario no se puede leer, la app NO se bloquea: se comporta como antes de
-// existir esta función (QR generado). Ver ensurePool().
+// Último error al leer el inventario (p. ej. reglas sin desplegar, red caída).
+// OJO: mientras valga algo, el registro de las denominaciones de
+// INVENTARIO_MONTOS queda BLOQUEADO (ver inventarioIlegible()). Antes se
+// seguía adelante con el QR de prueba generado por la app, lo que emitía vales
+// de $200/$300/$500/$1000 sin folio real de Combusa.
 let poolError = null;
 
 // Lista completa (incluye asignados/canjeados) para la tabla de Admin. Se carga
@@ -141,37 +151,56 @@ function capitalize(s) {
 // ===========================================================================
 //  Carga de datos
 // ===========================================================================
-// Pool de asignación (`status == "disponible"`) + sonda de existencia.
+// Existencias (`COUNT` por denominación) + sonda de existencia.
 //
-// IMPORTANTE: esta promesa NUNCA se rechaza. Si el inventario no se puede leer
-// (reglas sin desplegar, sin red…), se deja el pool vacío y `inventarioUsado`
-// en false: el registro de vales sigue funcionando igual que antes de existir
-// el inventario, en lugar de quedarse bloqueado. El error se muestra en la
-// sección de Admin, que es donde se puede hacer algo al respecto.
+// Son 5 consultas de agregación en paralelo, de ~150 bytes de respuesta cada
+// una: no devuelven documentos, así que NO descargan ningún `qrImageBase64`.
+// Esto es lo que sustituye a la descarga del pool completo al entrar a la app.
+//
+// IMPORTANTE: esta promesa NUNCA se rechaza, pero un fallo ya NO es inocuo:
+// deja `poolError` puesto y eso BLOQUEA el registro de las denominaciones que
+// salen del inventario (ver inventarioIlegible()). El registro con QR generado
+// queda sólo para las denominaciones fuera de INVENTARIO_MONTOS.
 export function ensurePool() {
   // Si el intento anterior falló, se vuelve a probar (puede haber sido un fallo
-  // puntual o unas reglas recién desplegadas).
-  if (!poolPromise || poolError) poolPromise = cargarPool();
-  return poolPromise;
+  // puntual, una red móvil intermitente o unas reglas recién desplegadas).
+  if (!stockPromise || poolError) stockPromise = cargarStock();
+  return stockPromise;
 }
 
-async function cargarPool() {
+async function cargarStock() {
   try {
-    const [snapDisponibles, snapCualquiera] = await Promise.all([
-      getDocs(query(inventarioRef, where("status", "==", "disponible"))),
-      getDocs(query(inventarioRef, limit(1))),
-    ]);
-    disponibles = snapDisponibles.docs.map((d) => ({ folio: d.id, ...d.data() }));
-    disponibles.sort((a, b) => Number(a.folio) - Number(b.folio)); // FIFO por folio
-    inventarioUsado = !snapCualquiera.empty;
+    // El COUNT total es la sonda de existencia: hay inventario aunque esté todo
+    // asignado. No se puede deducir de los COUNT por denominación.
+    const snaps = await withRetry(() =>
+      Promise.all([
+        getCountFromServer(inventarioRef),
+        ...INVENTARIO_MONTOS.map((monto) =>
+          getCountFromServer(
+            query(
+              inventarioRef,
+              where("status", "==", "disponible"),
+              where("monto", "==", Number(monto))
+            )
+          )
+        ),
+      ])
+    );
+    const [totalSnap, ...porMonto] = snaps;
+    inventarioTotal = totalSnap.data().count;
+    stock = new Map(
+      INVENTARIO_MONTOS.map((monto, i) => [Number(monto), porMonto[i].data().count])
+    );
+    inventarioUsado = inventarioTotal > 0;
     poolError = null;
   } catch (err) {
     console.error("[inventario] no se pudo leer el inventario:", err);
-    disponibles = [];
-    inventarioUsado = false; // → el registro usa el QR generado, como antes
-    poolError = err;
+    stock = new Map();
+    inventarioTotal = 0;
+    inventarioUsado = false;
+    poolError = err; // → el registro se BLOQUEA, no cae al QR de prueba
   }
-  return disponibles;
+  return stock;
 }
 
 // Error de lectura del inventario, si lo hubo (para avisar en Admin).
@@ -179,9 +208,17 @@ export function inventarioError() {
   return poolError;
 }
 
-function refreshPool() {
-  poolPromise = cargarPool();
-  return poolPromise;
+/* ¿El inventario está ilegible ahora mismo?
+   Es la señal de SEGURIDAD del registro: si vale true no se puede saber qué
+   folios hay, así que registrar una denominación de INVENTARIO_MONTOS tiene
+   que bloquearse en vez de inventarse un QR de prueba. */
+export function inventarioIlegible() {
+  return Boolean(poolError);
+}
+
+function refreshStock() {
+  stockPromise = cargarStock();
+  return stockPromise;
 }
 
 // Lista completa para la tabla de Admin.
@@ -223,40 +260,127 @@ export function inventarioEnUso() {
   return inventarioUsado;
 }
 
-// Vales disponibles y NO vencidos de una denominación.
-export function disponiblesPorMonto(monto) {
-  return disponibles.filter((v) => Number(v.monto) === Number(monto) && !esVencido(v));
+/* Existencias de una denominación, según el último COUNT del servidor.
+   Es un número, no una lista: contar ya no cuesta descargar folios.
+
+   Es un TOPE SUPERIOR: el COUNT no puede excluir los folios vencidos (haría
+   falta un filtro de rango y, con él, un índice compuesto). Quien decide de
+   verdad es reservarFolios(), que sí descarta los vencidos. */
+export function stockDisponible(monto) {
+  return stock.get(Number(monto)) || 0;
 }
 
-// Reserva (en memoria) los folios para una lista de montos.
-// Devuelve { picks, faltantes }: `picks` en el mismo orden que `items`, y
-// `faltantes` = { monto: cuántos faltaron }. No escribe en Firestore: quien
-// llama añade los updates al mismo writeBatch que crea los vales.
-export function tomarFolios(items) {
-  const usados = new Set();
-  const picks = [];
-  const faltantes = {};
+// ---------------------------------------------------------------------------
+//  Reserva de folios
+// ---------------------------------------------------------------------------
+// Folios extra que se piden por denominación además de los necesarios. Cubren
+// dos cosas: recuperar el orden FIFO numérico dentro de la ventana (Firestore
+// ordena de forma implícita por ID de documento, que es LEXICOGRÁFICO) y poder
+// saltarse algún folio vencido sin volver a consultar. Cada folio extra cuesta
+// ~6KB de base64, así que el margen se mantiene pequeño.
+const MARGEN_FOLIOS = 4;
+// Segunda ventana, sólo si la primera venía entera de folios vencidos.
+const MARGEN_AMPLIO = 40;
 
+/* Reserva los folios para una lista de montos leyendo de Firestore SÓLO los
+   documentos que se van a usar (más el margen de arriba), en vez del pool
+   completo. Como el documento que se descarga ya trae su `qrImageBase64`, la
+   misma consulta sirve para asignar el folio y para pintar su QR después: no
+   hace falta una segunda lectura.
+
+   No escribe nada: quien llama añade los updates al mismo writeBatch que crea
+   los vales. La carrera con otro dispositivo que se lleve el folio entre la
+   reserva y el commit la corta firestore.rules, porque invIsAssignment() exige
+   que el folio siga en 'disponible'; el lote entero falla y no se guarda nada.
+
+   Devuelve { picks, faltantes, error }:
+     picks     alineado con `items`; null si esa denominación no sale del
+               inventario (o si faltó folio).
+     faltantes { monto: cuántos faltaron }.
+     error     el inventario no se pudo leer. Quien llama DEBE bloquear el
+               registro: no es "no hay inventario", es "no se sabe". */
+export async function reservarFolios(items) {
+  await ensurePool();
+  if (poolError) return { picks: [], faltantes: {}, error: poolError };
+
+  // Cuántos se piden de cada denominación que sale del inventario.
+  const pedidos = new Map();
   for (const monto of items) {
-    if (!montoRequiereInventario(monto)) {
-      picks.push(null); // sin inventario para esta denominación: QR generado
-      continue;
-    }
-    const libre = disponiblesPorMonto(monto).find((v) => !usados.has(v.folio));
-    if (!libre) {
-      faltantes[monto] = (faltantes[monto] || 0) + 1;
-      picks.push(null);
-      continue;
-    }
-    usados.add(libre.folio);
-    picks.push({
-      folio: libre.folio,
-      monto: Number(libre.monto),
-      vencimiento: libre.vencimiento || null,
-      qrImageBase64: libre.qrImageBase64 || null,
-    });
+    if (!montoRequiereInventario(monto)) continue;
+    pedidos.set(Number(monto), (pedidos.get(Number(monto)) || 0) + 1);
   }
-  return { picks, faltantes };
+
+  const colas = new Map();
+  const faltantes = {};
+  try {
+    for (const [monto, cantidad] of pedidos) {
+      const libres = await candidatos(monto, cantidad);
+      if (libres.length < cantidad) faltantes[monto] = cantidad - libres.length;
+      colas.set(monto, libres);
+    }
+  } catch (err) {
+    // Igual que arriba: sin lectura fiable no se asigna nada a ciegas.
+    console.error("[inventario] no se pudieron reservar folios:", err);
+    return { picks: [], faltantes: {}, error: err };
+  }
+
+  const picks = items.map((monto) => {
+    if (!montoRequiereInventario(monto)) return null;
+    const cola = colas.get(Number(monto));
+    return cola && cola.length ? cola.shift() : null;
+  });
+  return { picks, faltantes, error: null };
+}
+
+// Folios asignables de una denominación, en orden FIFO y ya sin vencidos.
+async function candidatos(monto, cantidad) {
+  let libres = await ventanaDisponibles(monto, cantidad + MARGEN_FOLIOS);
+  // Si la ventana entera venía vencida todavía puede haber folios útiles más
+  // adelante: se amplía UNA vez, y sólo si el COUNT dice que hay más.
+  if (
+    libres.length < cantidad &&
+    stockDisponible(monto) > cantidad + MARGEN_FOLIOS
+  ) {
+    libres = await ventanaDisponibles(monto, cantidad + MARGEN_AMPLIO);
+  }
+  return libres.slice(0, cantidad);
+}
+
+/* Ventana de folios `disponible` de una denominación, como máximo `tope`.
+
+   Dos filtros de igualdad y un limit(), sin orderBy: así Firestore la sirve
+   con los índices de campo único que crea solo (verificado contra el proyecto)
+   y no hace falta desplegar ningún índice compuesto.
+
+   getDocsFromServer y NO getDocs: esto es deliberado y es una regla de
+   seguridad, no una optimización. getDocs() se conforma con la caché local
+   cuando no alcanza el servidor, y como los COUNT del arranque no guardan
+   documentos, sin red devolvía un resultado VACÍO en vez de fallar. Un vacío
+   se lee como "no quedan folios", que es una mentira peligrosa: tapa un
+   problema de conexión con un "sin existencias". getDocsFromServer() falla de
+   forma explícita y entonces el registro se bloquea con el mensaje correcto.
+   Un vale de papel no se puede asignar a partir de una caché. */
+async function ventanaDisponibles(monto, tope) {
+  const snap = await withRetry(() =>
+    getDocsFromServer(
+      query(
+        inventarioRef,
+        where("status", "==", "disponible"),
+        where("monto", "==", Number(monto)),
+        limit(tope)
+      )
+    )
+  );
+  return snap.docs
+    .map((d) => ({ folio: d.id, ...d.data() }))
+    .filter((v) => !esVencido(v))
+    .sort((a, b) => Number(a.folio) - Number(b.folio)) // FIFO por folio
+    .map((v) => ({
+      folio: v.folio,
+      monto: Number(v.monto),
+      vencimiento: v.vencimiento || null,
+      qrImageBase64: v.qrImageBase64 || null,
+    }));
 }
 
 // Referencia al documento de inventario de un folio (para el writeBatch).
@@ -274,12 +398,16 @@ export function camposAsignacion(nombre, batchId) {
   };
 }
 
-// Tras guardar: quita los folios del pool y refresca en segundo plano.
-export function marcarAsignadosLocal(folios) {
-  const set = new Set(folios.map(String));
-  disponibles = disponibles.filter((v) => !set.has(String(v.folio)));
+/* Tras guardar: descuenta las existencias en local y refresca en segundo
+   plano. Recibe los `picks` que se acaban de asignar (no sólo los folios),
+   porque ahora el stock se lleva por denominación y hace falta el monto. */
+export function marcarAsignadosLocal(asignados) {
+  for (const pick of asignados) {
+    const monto = Number(pick.monto);
+    stock.set(monto, Math.max(0, (stock.get(monto) || 0) - 1));
+  }
   todosCargados = false;
-  refreshPool().catch((err) => console.error("[inventario] refresh:", err));
+  refreshStock().catch((err) => console.error("[inventario] refresh:", err));
 }
 
 // Campos que DEVUELVEN un vale al inventario (al anular el vale que lo usaba).
@@ -344,7 +472,7 @@ export async function qrImagenDeFolio(folio) {
 // Recarga el inventario tras devolver un folio (pool + tabla de la pestaña).
 export async function refrescarInventario() {
   todosCargados = false;
-  await refreshPool();
+  await refreshStock();
 }
 
 // ===========================================================================
@@ -478,7 +606,7 @@ async function importarPdf(file) {
     `✅ ${guardados} importados · ${requierenRevision} requieren revisión`
   );
 
-  await Promise.all([cargarTodos(true), refreshPool()]);
+  await Promise.all([cargarTodos(true), refreshStock()]);
   loteSeleccionado = null;
   el.filtroStatus.value = "disponible";
   el.filtroMonto.value = "";
@@ -699,7 +827,7 @@ async function onTableClick(event) {
     // sólo habilita el vale para entrar al pool de asignación.
     await updateDoc(inventarioDocRef(folio), { status: "disponible" });
     todosCargados = false;
-    await Promise.all([cargarTodos(true), refreshPool()]);
+    await Promise.all([cargarTodos(true), refreshStock()]);
     renderInventario();
     deps.showToast(`✅ Folio ${formatFolio(folio)} aprobado`);
   } catch (err) {
