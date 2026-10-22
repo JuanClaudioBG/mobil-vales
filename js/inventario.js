@@ -80,7 +80,9 @@ let poolError = null;
 // sólo al abrir la sección, porque arrastra el base64 de todos los QR.
 let todos = [];
 let todosCargados = false;
-let loteSeleccionado = null;
+// "" = todo el inventario. Es la vista por defecto: las existencias reales son
+// la suma de todas las cargas, y el registro asigna folios de cualquiera.
+let loteSeleccionado = "";
 
 // --- Referencias al DOM (la sección vive en la pestaña de Admin) ------------
 const $ = (sel) => document.querySelector(sel);
@@ -631,7 +633,7 @@ async function importarPdf(file) {
   );
 
   await Promise.all([cargarTodos(true), refreshStock()]);
-  loteSeleccionado = null;
+  loteSeleccionado = "";
   el.filtroStatus.value = "disponible";
   el.filtroMonto.value = "";
   renderInventario();
@@ -718,8 +720,8 @@ function renderLotes() {
     if (b === "sin-fecha") return -1;
     return b.localeCompare(a);
   });
-  if (loteSeleccionado === null || (loteSeleccionado !== "" && !claves.includes(loteSeleccionado))) {
-    loteSeleccionado = claves[0] || "";
+  if (loteSeleccionado !== "" && !claves.includes(loteSeleccionado)) {
+    loteSeleccionado = "";
   }
   fillOptions(el.filtroLote, [["", "Todo el inventario"], ...claves.map((clave, i) => [
     clave, etiquetaLote(clave) + (i === 0 && clave !== "sin-fecha" ? " · Más reciente" : ""),
