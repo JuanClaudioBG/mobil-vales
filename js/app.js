@@ -6,6 +6,7 @@ import {
   initializeFirestore,
   collection,
   doc,
+  getDocFromServer,
   getDocsFromServer,
   serverTimestamp,
   writeBatch,
@@ -61,9 +62,10 @@ import {
   inventarioDocRef,
   camposAsignacion,
   camposDevolucion,
-  existeFolio,
+  asignacionDeFolio,
   qrImagenDeFolio,
   refrescarInventario,
+  refrescarExistencias,
   marcarAsignadosLocal,
   formatFolio,
 } from "./inventario.js";
@@ -223,6 +225,7 @@ const adminEmpty = $("#admin-empty");
 const btnExcel = $("#btn-excel");
 const adminValesBody = $("#admin-vales-body");
 const adminValesEmpty = $("#admin-vales-empty");
+const adminBuscar = $("#admin-buscar");
 
 // Carrito de montos (multi-vale)
 const denomsEl = $("#denoms");
@@ -238,6 +241,13 @@ const carrito = new Map(); // monto -> cantidad
 const MAX_VALES = 20; // tope de vales por registro
 let pendingSave = null; // payload en espera de confirmación
 let saving = false; // evita doble envío
+// Consulta de inventario en curso tras pulsar «Registrar vales». Es el candado
+// contra el doble toque: mientras valga true no se lanza otra consulta ni se
+// abre una segunda confirmación.
+let revisando = false;
+// Incluye anulaciones y commits que siguen pendientes después del timeout.
+// La autoactualización debe esperar su resolución real, sin reintentarlos.
+let commitsEnCurso = 0;
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -378,8 +388,8 @@ function isSafeToReload() {
   if (personaSelect.value) return false;
   if (carrito.size > 0) return false;
   if (notasInput.value.trim()) return false;
-  // Guardado en vuelo: recargar dejaría el lote a medias.
-  if (saving) return false;
+  // No interrumpir consultas de registro ni perder la respuesta de un commit.
+  if (saving || revisando || commitsEnCurso > 0) return false;
   // Cualquier modal abierto (confirmación, QR del vale, PIN de administrador):
   // el QR es la única copia que el usuario tiene del vale recién generado.
   if (!confirmModal.hidden || !qrModal.hidden || !adminPinModal.hidden) return false;
@@ -637,6 +647,7 @@ function renderExistenciasRegistro() {
 }
 
 function actualizarAccionRegistro() {
+  if (revisando) return;
   const items = cartItems();
   btnRegistrar.textContent = items.length
     ? `Registrar ${items.length} ${items.length === 1 ? "vale" : "vales"} · ${money(items.reduce((total, monto) => total + monto, 0))}`
@@ -785,10 +796,16 @@ async function loadVales() {
 // pintar historial, dashboard y admin, así que ambos respetan los filtros y el
 // mes que estén seleccionados en ese momento.
 for (const btn of refreshButtons) btn.addEventListener("click", loadVales);
+// …y de paso vuelven a contar las existencias (en segundo plano, sin bloquear):
+// «Actualizar» tiene que dejar al día todo lo que el registro va a usar.
+for (const btn of refreshButtons) btn.addEventListener("click", () => refrescarExistencias());
 
 // --- Enviar: validar → mostrar confirmación --------------------------------
 valeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  // Doble toque: si ya hay una consulta en curso, una confirmación abierta o
+  // un guardado en vuelo, este envío se ignora por completo.
+  if (revisando || saving || !confirmModal.hidden) return;
   formError.hidden = true;
 
   const persona = personaPorNombre.get(personaSelect.value);
@@ -825,7 +842,24 @@ valeForm.addEventListener("submit", async (e) => {
   // Cada vale tiene que respaldarse con un folio real del inventario de
   // Combusa. Se comprueba y se RESERVA antes de confirmar, para no dejar el
   // registro a medias ni emitir nada sin folio.
-  const revision = await revisarInventario(items);
+  //
+  // La consulta va a la red y en datos móviles tarda: desde el primer toque
+  // el botón queda bloqueado y dice qué está pasando. El `finally` lo
+  // restaura SIEMPRE, también si la consulta lanza.
+  revisando = true;
+  btnRegistrar.disabled = true;
+  btnRegistrar.innerHTML = '<span class="spinner"></span> Consultando inventario…';
+  let revision;
+  try {
+    revision = await revisarInventario(items);
+  } catch (err) {
+    console.error("Error al consultar el inventario:", err);
+    revision = { problema: MSG_SIN_CONSULTA };
+  } finally {
+    revisando = false;
+    btnRegistrar.disabled = false;
+    actualizarAccionRegistro();
+  }
   if (revision.problema) {
     formError.textContent = revision.problema;
     formError.hidden = false;
@@ -840,7 +874,15 @@ valeForm.addEventListener("submit", async (e) => {
    Devuelve { problema } con el mensaje a mostrar, o { picks } con un folio por
    vale (null donde esa denominación no sale del inventario). */
 async function revisarInventario(items) {
-  await ensurePool();
+  // Conteos FRESCOS, no los del arranque: si otro celular importó un PDF (o
+  // anuló un vale) desde que se abrió esta pestaña, aquí ya se ve.
+  await ensurePool({ fresco: true });
+
+  // Los registros históricos sin folio siguen siendo consultables. Toda alta
+  // nueva debe vincularse a inventario; no se emiten nuevos QR de prueba.
+  if (items.some((m) => !INVENTARIO_MONTOS.includes(Number(m)))) {
+    return { problema: "Los nuevos registros requieren un folio de inventario por vale. Usa las denominaciones disponibles." };
+  }
 
   // ------------------------------------------------------------------
   //  SEGURIDAD: inventario ilegible ⇒ NO se registra, no se improvisa.
@@ -851,10 +893,15 @@ async function revisarInventario(items) {
   //  real de Combusa, imposibles de distinguir en la gasolinera. Un timeout de
   //  red convertía además un "sin existencias" legítimo en un vale falso.
   //  Ahora se bloquea: más vale no registrar que registrar algo que no vale.
-  //  El QR generado queda SÓLO para denominaciones fuera de INVENTARIO_MONTOS.
+  //
+  //  "No pudimos consultar" y "no hay" son mensajes DISTINTOS a propósito: el
+  //  primero se arregla reintentando, el segundo importando un PDF.
+  const sinConsulta =
+    "No pudimos consultar las existencias. Revisa tu conexión e inténtalo de nuevo.";
+  const comoReponer = " Importa el PDF de Combusa en la pestaña Inventario.";
   const deInventario = items.filter((m) => INVENTARIO_MONTOS.includes(Number(m)));
   if (inventarioIlegible() && deInventario.length > 0) {
-    return { problema: "No se pudo leer el inventario, intenta de nuevo" };
+    return { problema: sinConsulta };
   }
 
   // Cuántos se piden de cada denominación que sale del inventario.
@@ -864,28 +911,30 @@ async function revisarInventario(items) {
     pedidos.set(monto, (pedidos.get(monto) || 0) + 1);
   }
 
-  // Aviso temprano con las existencias que ya están contadas (sin descargar
-  // folios). Es un tope superior —no descuenta vencidos—, así que si pasa este
-  // filtro todavía puede faltar algo; lo confirma la reserva de abajo.
+  // Aviso temprano con las existencias recién contadas (sin descargar folios).
+  // Es un tope superior —no descuenta vencidos—, así que si pasa este filtro
+  // todavía puede faltar algo; lo confirma la reserva de abajo.
   const avisos = [];
   for (const [monto, cantidad] of [...pedidos].sort((a, b) => a[0] - b[0])) {
     const libres = stockDisponible(monto);
     if (libres >= cantidad) continue;
     avisos.push(
       libres === 0
-        ? `⚠️ Sin inventario de ${money(monto)} disponible`
-        : `⚠️ Sólo quedan ${libres} vales de ${money(monto)} en inventario (pediste ${cantidad})`
+        ? `⚠️ No hay existencias de ${money(monto)}.`
+        : libres === 1
+          ? `⚠️ Sólo queda 1 vale de ${money(monto)} (pediste ${cantidad}).`
+          : `⚠️ Sólo quedan ${libres} vales de ${money(monto)} (pediste ${cantidad}).`
     );
   }
   if (avisos.length > 0) {
-    return { problema: avisos.join(". ") + ". Importa el PDF de Combusa en la pestaña Admin." };
+    return { problema: avisos.join(" ") + comoReponer };
   }
 
   // Reserva de verdad: una ventana con limit() por denominación, en vez del
   // pool completo. Trae ya el qrImageBase64 de los folios elegidos.
   const { picks, faltantes, error } = await reservarFolios(items);
   if (error) {
-    return { problema: "No se pudo leer el inventario, intenta de nuevo" };
+    return { problema: sinConsulta };
   }
   if (Object.keys(faltantes).length > 0) {
     const detalle = Object.keys(faltantes)
@@ -894,12 +943,17 @@ async function revisarInventario(items) {
       .join(", ");
     return {
       problema:
-        `⚠️ Sin inventario de ${detalle} disponible (puede haber folios vencidos). ` +
-        "Importa el PDF de Combusa en la pestaña Admin.",
+        `⚠️ No hay existencias vigentes de ${detalle} (puede haber folios vencidos).` +
+        comoReponer,
     };
   }
   return { picks };
 }
+
+// Mismo texto que usa revisarInventario() cuando no puede leer el inventario;
+// aquí cubre el caso de que la propia consulta lance.
+const MSG_SIN_CONSULTA =
+  "No pudimos consultar las existencias. Revisa tu conexión e inténtalo de nuevo.";
 
 function validarBase(d) {
   if (!d.nombre || !CATEGORIAS.includes(d.categoria)) return "Selecciona una persona del directorio.";
@@ -1004,7 +1058,15 @@ document.addEventListener("keydown", (e) => {
    Devuelve { ok } | { ok: false, err, incierto }. */
 async function commitConTiempo(batch) {
   try {
-    await withTimeout(batch.commit());
+    const pendiente = batch.commit();
+    commitsEnCurso++;
+    const seguido = pendiente.then(
+      () => { commitsEnCurso--; },
+      (err) => { commitsEnCurso--; throw err; }
+    );
+    // El timeout no cancela `pendiente`: sólo la resolución/rechazo real
+    // libera la recarga. No se reconcilia ni se repite la escritura.
+    await withTimeout(seguido);
     return { ok: true };
   } catch (err) {
     return { ok: false, err, incierto: Boolean(err && err.esTimeout) };
@@ -1035,7 +1097,7 @@ async function doSave() {
   // nunca se guarda un vale sin su folio.
   const faltantes = {};
   items.forEach((monto, i) => {
-    if (montoRequiereInventario(monto) && !(picks && picks[i])) {
+    if (!(picks && picks[i])) {
       faltantes[monto] = (faltantes[monto] || 0) + 1;
     }
   });
@@ -1051,7 +1113,7 @@ async function doSave() {
     btnCancelar.disabled = false;
     btnConfirmar.textContent = "Confirmar";
     closeConfirm();
-    formError.textContent = `⚠️ Sin inventario de ${detalle} disponible. Actualiza el inventario e inténtalo de nuevo.`;
+    formError.textContent = `⚠️ No hay existencias de ${detalle}. Pulsa «Actualizar» en la pestaña Inventario e inténtalo de nuevo.`;
     formError.hidden = false;
     return;
   }
@@ -1075,6 +1137,7 @@ async function doSave() {
         fechaVale,
         createdAt: serverTimestamp(),
         anulado: false,
+        esquema: 2,
         batchId,
         qrCode,
       };
@@ -1084,7 +1147,7 @@ async function doSave() {
         if (pick.vencimiento) docData.vencimiento = pick.vencimiento;
         // El vale del inventario pasa a "asignado" en el MISMO lote: o se
         // guarda todo, o no se guarda nada.
-        batch.update(inventarioDocRef(pick.folio), camposAsignacion(base.nombre, batchId));
+        batch.update(inventarioDocRef(pick.folio), camposAsignacion(base.nombre, batchId, ref.id));
         asignados.push(pick);
       }
       batch.set(ref, docData);
@@ -1619,8 +1682,92 @@ adminPinInput.addEventListener("keydown", (e) => {
 // --- Anular un vale (borrado suave) — requiere PIN de administrador ----------
 // Si el vale usaba un folio real de Combusa, ese folio VUELVE al inventario
 // como "disponible": el vale de papel no se gastó, así que puede reasignarse.
+
+/* Estado REAL del vale y de su folio, leído del servidor justo antes de
+   anular. La fila de la tabla puede tener horas (no hay tiempo real): otro
+   dispositivo pudo anular ya este vale y el folio pudo pasar a otra persona.
+
+   Devuelve estado de anulación, folioAjeno o revisionNecesaria y el folio leído:
+     yaAnulado   el vale ya no está activo (o ya no existe): no hay nada que
+                 anular.
+     devolver    el folio sigue asignado a ESTE ID de vale (además del lote): se
+                 devuelve en el mismo lote.
+     folioAjeno  el folio existe pero hoy está asignado a otro registro: la
+                 anulación se BLOQUEA y no se modifica ningún documento.
+     revisionNecesaria  estado sin dueño demostrable: se bloquea; no se
+                 infiere propiedad ni se reparan datos.
+
+   Vale HISTÓRICO con folio (sin `esquema`): se devuelve el folio sólo si el
+   vínculo se demuestra con lo que guardaba la versión anterior, leído del
+   servidor: el vale tiene batchId (texto no vacío), y su folio está
+   'asignado', con ese mismo batchId, el mismo monto y SIN asignadoValeId. Es
+   la misma condición que exige firestore.rules (devolucionHistorica). Si el
+   folio tiene asignadoValeId de otro vale es folioAjeno; cualquier otra
+   diferencia (sin batchId, lote o monto distinto, folio ausente o en otro
+   estado) queda en revisionNecesaria.
+
+   LANZA si no se puede leer: sin lectura fiable no se escribe nada.
+
+   Esto es cortesía de interfaz (un mensaje claro y ni una escritura inútil).
+   La protección de verdad está en firestore.rules, que rechaza la segunda
+   anulación y la devolución de un folio que ya no es de este vale. */
+async function comprobarAntesDeAnular(vale) {
+  const snap = await withRetry(() => getDocFromServer(doc(db, COLLECTION, vale.id)));
+  if (!snap.exists() || snap.data().anulado === true) {
+    return { yaAnulado: true, devolver: false, folioAjeno: false };
+  }
+  const actual = snap.data();
+  const folio = folioDe(actual);
+  if (!("folio" in actual) && actual.esquema === undefined) {
+    return { yaAnulado: false, devolver: false, folioAjeno: false };
+  }
+  if (actual.esquema === undefined) {
+    const lote = typeof actual.batchId === "string" ? actual.batchId : "";
+    if (typeof actual.folio !== "string" || !folio || !lote) {
+      return { yaAnulado: false, devolver: false, folioAjeno: false, revisionNecesaria: true };
+    }
+    const asignacion = await asignacionDeFolio(folio);
+    const sinDueñoNuevo = !asignacion.asignadoValeId;
+    const esSuya =
+      asignacion.existe &&
+      asignacion.status === "asignado" &&
+      asignacion.batchId === lote &&
+      Number(asignacion.monto) === Number(actual.monto) &&
+      sinDueñoNuevo;
+    const folioAjeno = asignacion.existe && asignacion.status === "asignado" && !sinDueñoNuevo;
+    return {
+      yaAnulado: false,
+      devolver: esSuya,
+      folioAjeno,
+      revisionNecesaria: !esSuya && !folioAjeno,
+      folio,
+    };
+  }
+  if (actual.esquema !== 2 || !folio) {
+    return { yaAnulado: false, devolver: false, folioAjeno: false, revisionNecesaria: true };
+  }
+
+  const asignacion = await asignacionDeFolio(folio);
+  const esSuya =
+    asignacion.existe &&
+    asignacion.status === "asignado" &&
+    asignacion.asignadoValeId === vale.id &&
+    Boolean(actual.batchId) &&
+    asignacion.batchId === actual.batchId;
+  const folioAjeno = asignacion.existe && asignacion.status === "asignado" &&
+    Boolean(asignacion.asignadoValeId) && asignacion.asignadoValeId !== vale.id;
+  return {
+    yaAnulado: false,
+    devolver: esSuya,
+    folioAjeno,
+    revisionNecesaria: !esSuya && !folioAjeno,
+    folio,
+  };
+}
+
 async function anularVale(vale) {
-  const { id, nombre, folio } = vale;
+  const { id, nombre } = vale;
+  let folio = folioDe(vale);
 
   const ok = await requestAdminPin(
     `Anular el vale de "${nombre}". Dejará de contar en reportes.` +
@@ -1628,26 +1775,48 @@ async function anularVale(vale) {
   );
   if (!ok) return;
 
-  /* ¿Sigue existiendo el vale de papel? Los folios de pruebas anteriores
-     pueden haberse borrado; en ese caso se anula el vale y ya está.
+  /* Antes de escribir se lee del servidor cómo están HOY el vale y su folio.
 
      Esta comprobación va FUERA del try del lote y a propósito: si no se puede
-     leer el inventario, se sale sin escribir NADA. Antes existeFolio()
-     devolvía false ante cualquier error, así que un fallo de red se confundía
-     con "ese folio ya no existe", el vale se marcaba anulado y el folio se
-     quedaba en 'asignado' para siempre, apuntando a un vale anulado y sin
-     forma de recuperarlo desde la aplicación. Mejor no anular y que el usuario
-     repita. */
-  let devolver = false;
-  if (folio) {
-    try {
-      devolver = await existeFolio(folio);
-    } catch (err) {
-      console.error("Error al comprobar el folio antes de anular:", err);
-      alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
-      return; // el vale NO se anula
-    }
+     leer, se sale sin escribir NADA. Antes un fallo de red se confundía con
+     "ese folio ya no existe", el vale se marcaba anulado y el folio se quedaba
+     en 'asignado' para siempre, apuntando a un vale anulado y sin forma de
+     recuperarlo desde la aplicación. Mejor no anular y que el usuario repita. */
+  let previo;
+  try {
+    previo = await comprobarAntesDeAnular(vale);
+  } catch (err) {
+    console.error("Error al comprobar el vale antes de anular:", err);
+    alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
+    return; // el vale NO se anula
   }
+
+  if (previo.yaAnulado) {
+    // Pantalla desactualizada: otro dispositivo ya lo anuló. No se escribe
+    // nada (el folio puede ser ya de otra persona) y se refresca la lista.
+    alert("Este vale ya estaba anulado. Actualizamos la lista; no se hizo ningún cambio.");
+    await loadVales();
+    return;
+  }
+  if (previo.folio) folio = previo.folio;
+  if (previo.revisionNecesaria) {
+    alert(
+      "No se anuló: no podemos comprobar el vínculo de este vale con su folio. " +
+      "Requiere revisión del registro y del inventario antes de continuar. No se modificó ningún dato."
+    );
+    return;
+  }
+  if (previo.folioAjeno) {
+    // El vale sigue activo pero su folio está asignado a OTRO registro. No se
+    // anula ni se toca nada: es una inconsistencia que hay que revisar a mano
+    // (las reglas rechazarían igualmente la anulación).
+    alert(
+      `No se anuló: el folio ${formatFolio(folio)} está asignado a otro registro. ` +
+        "No se hizo ningún cambio. Revisa el folio en la pestaña Inventario."
+    );
+    return;
+  }
+  const devolver = previo.devolver;
 
   try {
     // Un solo lote: o se anula el vale Y se devuelve el folio, o no pasa nada.
@@ -1656,18 +1825,26 @@ async function anularVale(vale) {
       anulado: true,
       anuladoEn: serverTimestamp(),
     });
-    if (devolver) batch.update(inventarioDocRef(folio), camposDevolucion());
+    if (devolver) batch.update(inventarioDocRef(folio), camposDevolucion(id));
 
     const commit = await commitConTiempo(batch);
     if (!commit.ok) {
       console.error("Error al anular:", commit.err);
+      const rechazado = commit.err && commit.err.code === "permission-denied";
       // Agotar el tiempo no cancela la escritura: puede haberse anulado igual.
       alert(
         commit.incierto
           ? "Se agotó el tiempo al anular. Puede que SÍ se haya anulado: " +
             "pulsa «Actualizar» y compruébalo antes de volver a intentarlo."
-          : "No se pudo anular, revisa tu conexión e intenta de nuevo"
+          : rechazado
+            ? // El servidor dijo que no y el lote es atómico: no cambió nada.
+              // NO se afirma el motivo: un rechazo no prueba por sí solo que
+              // el vale o el folio hayan cambiado.
+              "El servidor rechazó la anulación y no se hizo ningún cambio. " +
+              "Actualizamos la lista: revisa cómo está el vale antes de volver a intentarlo."
+            : "No se pudo anular, revisa tu conexión e intenta de nuevo"
       );
+      if (rechazado) await loadVales();
       return;
     }
 
@@ -2265,6 +2442,7 @@ function chartMonthAt(e) {
 //  Admin (histórico por persona + exportar Excel)
 // ===========================================================================
 btnExcel.addEventListener("click", exportExcel);
+adminBuscar.addEventListener("input", renderAdmin);
 
 function adminRows() {
   // Resumen histórico por persona, sin contar vales anulados.
@@ -2289,14 +2467,19 @@ function renderAdmin() {
   }
 
   // --- Todos los vales (incluye anulados, con tachado) ---
+  const busqueda = adminBuscar.value; // nombre o folio
+  const visibles = allVales.filter((v) => coincideBusqueda(v, busqueda));
   adminValesBody.innerHTML = "";
-  adminValesEmpty.hidden = allVales.length > 0;
-  for (const v of allVales) {
+  adminValesEmpty.hidden = visibles.length > 0;
+  adminValesEmpty.textContent = allVales.length
+    ? "Ningún vale coincide con la búsqueda."
+    : "Aún no hay vales.";
+  for (const v of visibles) {
     const anulado = !!v.anulado;
     const tr = document.createElement("tr");
     tr.className = anulado ? "row-anulada" : "row-" + catSlug(v.categoria);
     tr.innerHTML = `
-      <td>${escapeHtml(v.nombre)}</td>
+      <td>${escapeHtml(v.nombre)}${folioHtml(v)}</td>
       <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>

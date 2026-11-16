@@ -21,6 +21,7 @@
 // ============================================================================
 import fs from "node:fs";
 import assert from "node:assert/strict";
+import vm from "node:vm";
 
 import {
   FIRESTORE_TIMEOUT_MS,
@@ -187,13 +188,16 @@ test("la tabla de Inventario (Admin) sigue mostrando lo mismo", () => {
 console.log("\n== 2. Seguridad: inventario ilegible ⇒ registro bloqueado ==");
 // ===========================================================================
 
-const MENSAJE_BLOQUEO = "No se pudo leer el inventario, intenta de nuevo";
+// "No pudimos consultar" (se arregla reintentando) es un mensaje distinto de
+// "No hay existencias" (se arregla importando un PDF): no deben confundirse.
+const MENSAJE_BLOQUEO =
+  "No pudimos consultar las existencias. Revisa tu conexión e inténtalo de nuevo.";
 
 /* Evalúa la revisarInventario() REAL de js/app.js con dependencias simuladas.
    `escenario` decide qué responden el inventario y la reserva. */
 function construirRevisar(escenario) {
   const fuente = extraerFuncion(appCode, "async function revisarInventario(");
-  const llamadas = { reservarFolios: 0 };
+  const llamadas = { reservarFolios: 0, ensurePool: [] };
   const fabrica = new Function(
     "ensurePool",
     "inventarioIlegible",
@@ -205,7 +209,7 @@ function construirRevisar(escenario) {
     `${fuente}; return revisarInventario;`
   );
   const revisar = fabrica(
-    async () => {},
+    async (opciones) => { llamadas.ensurePool.push(opciones); },
     () => Boolean(escenario.ilegible),
     (monto) =>
       !escenario.ilegible &&
@@ -257,24 +261,24 @@ await testAsync(
   }
 );
 
-await testAsync("un solo monto de inventario en el carrito ya bloquea todo", async () => {
+await testAsync("un monto no admitido bloquea el carrito completo", async () => {
   const { revisar } = construirRevisar({ ilegible: true });
   const r = await revisar([4000, 4000, 500]); // 500 sí sale del inventario
-  assert.equal(r.problema, MENSAJE_BLOQUEO);
+  assert.match(r.problema, /requieren un folio de inventario por vale/);
 });
 
 await testAsync(
-  "denominación FUERA de INVENTARIO_MONTOS sigue permitida con QR generado",
+  "denominación fuera de inventario no puede emitir un vale nuevo sin vínculo",
   async () => {
-    // Es la única excepción que el requisito deja viva.
+    // El esquema nuevo no permite usar la compatibilidad histórica en altas.
     assert.ok(
       !INVENTARIO_MONTOS.includes(4000),
       "este caso asume que 4000 no sale del inventario"
     );
     const { revisar } = construirRevisar({ ilegible: true });
     const r = await revisar([4000]);
-    assert.equal(r.problema, undefined, "no debería bloquearse");
-    assert.deepEqual(r.picks, [null], "sin folio: le toca el QR generado");
+    assert.match(r.problema, /requieren un folio de inventario por vale/);
+    assert.equal(r.picks, undefined);
   }
 );
 
@@ -287,15 +291,60 @@ await testAsync("si la reserva falla al leer, también se bloquea", async () => 
 await testAsync("sin existencias se avisa, y no se emite nada", async () => {
   const { revisar } = construirRevisar({ stock: { 500: 0 } });
   const r = await revisar([500]);
-  assert.match(r.problema, /Sin inventario de \$500 disponible/);
+  assert.match(r.problema, /No hay existencias de \$500\./);
+  assert.notEqual(r.problema, MENSAJE_BLOQUEO, "'no hay' no es 'no pudimos consultar'");
   assert.equal(r.picks, undefined);
 });
 
 await testAsync("si faltan folios en la reserva (vencidos), se bloquea", async () => {
   const { revisar } = construirRevisar({ faltantes: { 500: 1 } });
   const r = await revisar([500]);
-  assert.match(r.problema, /Sin inventario de \$500/);
+  assert.match(r.problema, /No hay existencias vigentes de \$500/);
   assert.equal(r.picks, undefined);
+});
+
+await testAsync("las existencias se vuelven a contar en CADA registro", async () => {
+  /* El bloqueo falso: con los conteos del arranque, un PDF importado desde
+     otro celular no se veía y el registro decía "sin inventario". */
+  const { revisar, llamadas } = construirRevisar({});
+  await revisar([500]);
+  assert.deepEqual(llamadas.ensurePool, [{ fresco: true }]);
+  assert.match(inv, /export function ensurePool\(\{ fresco = false \} = \{\}\)/);
+  assert.match(inv, /if \(fresco \|\| !stockPromise \|\| poolError\) stockPromise = cargarStock\(\)/);
+});
+
+await testAsync("los avisos de existencias respetan singular y plural", async () => {
+  const uno = await construirRevisar({ stock: { 500: 1 } }).revisar([500, 500]);
+  assert.match(uno.problema, /Sólo queda 1 vale de \$500 \(pediste 2\)\./);
+  const tres = await construirRevisar({ stock: { 500: 3 } }).revisar([500, 500, 500, 500]);
+  assert.match(tres.problema, /Sólo quedan 3 vales de \$500 \(pediste 4\)\./);
+});
+
+await testAsync("el aviso manda a la pestaña Inventario (ahí está «Importar PDF»)", async () => {
+  const { revisar } = construirRevisar({ stock: { 500: 0 } });
+  const r = await revisar([500]);
+  assert.match(r.problema, /pestaña Inventario/);
+  assert.ok(!/pestaña Admin/.test(app), "el botón de importar no está en Admin");
+});
+
+test("«↻ Actualizar» del inventario refresca la tabla Y los conteos", () => {
+  const render = extraerFuncion(inv, "export async function renderInventarioAdmin(");
+  assert.match(render, /Promise\.all\(\[cargarTodos\(force\), force \? refreshStock\(\) : null\]\)/);
+  // Y los «Actualizar» de Historial y Dashboard también vuelven a contar.
+  assert.match(app, /btn\.addEventListener\("click", \(\) => refrescarExistencias\(\)\)/);
+});
+
+test("«Registrar vales» se protege del doble toque", () => {
+  const i = app.indexOf('valeForm.addEventListener("submit"');
+  const envio = app.slice(i, app.indexOf("/* Comprueba el inventario y RESERVA", i));
+  // Candado lógico antes de cualquier trabajo.
+  assert.match(envio, /if \(revisando \|\| saving \|\| !confirmModal\.hidden\) return;/);
+  // Bloqueo visible desde el primer toque…
+  assert.match(envio, /revisando = true;\s*btnRegistrar\.disabled = true;/);
+  assert.match(envio, /Consultando inventario…/);
+  // …y restauración garantizada, también si la consulta lanza.
+  assert.match(envio, /finally \{\s*revisando = false;\s*btnRegistrar\.disabled = false;\s*actualizarAccionRegistro\(\);/);
+  assert.match(fs.readFileSync("index.html", "utf8"), /<button type="submit" id="btn-registrar">/);
 });
 
 await testAsync("camino feliz: devuelve un folio por vale", async () => {
@@ -320,6 +369,57 @@ test("doSave() consume la reserva; ya no vuelve a elegir folios", () => {
   assert.match(doSave, /pick \? `COMBUSA-\$\{pick\.folio\}` : makeQrCode\(anio\)/);
 });
 
+await testAsync("doSave real vincula cada ID generado con su inventario en el mismo lote", async () => {
+  // SDK y DOM simulados: comprueba el payload del CLIENTE, no la atomicidad
+  // de Firestore. La suite de emulador comprueba por separado esas escrituras.
+  const writes = [];
+  let nextId = 0, commits = 0;
+  const noop = () => {};
+  const serverTimestamp = () => "SERVER_TIMESTAMP";
+  const camposAsignacion = new Function("serverTimestamp",
+    `${extraerFuncion(invCode, "export function camposAsignacion(").replace(/^export /, "")}; return camposAsignacion;`
+  )(serverTimestamp);
+  const cantidad = Number(app.match(/const MAX_VALES = (\d+);/)[1]);
+  const ctx = {
+    saving: false,
+    pendingSave: {
+      base: { nombre: "Fixture", categoria: "Empleado", registradoPor: "Prueba", fechaValeStr: "2026-11-15" },
+      items: Array(cantidad).fill(200),
+      picks: Array.from({ length: cantidad }, (_, i) => ({ folio: String(140000 + i), monto: 200 })),
+    },
+    Timestamp: { fromDate: (d) => d }, parseDateInput: (s) => new Date(s), uuid: () => "lote-fixture",
+    btnConfirmar: {}, btnCancelar: {}, formError: {}, db: {}, valesRef: {},
+    doc: () => ({ id: `AUTO${nextId++}` }), serverTimestamp, camposAsignacion,
+    inventarioDocRef: (folio) => ({ folio }),
+    writeBatch: () => ({
+      update: (ref, data) => writes.push({ type: "update", ref, data }),
+      set: (ref, data) => writes.push({ type: "set", ref, data }),
+    }),
+    commitConTiempo: async () => { commits++; return { ok: true }; },
+    money, sum: (a) => a.reduce((s, n) => s + n, 0),
+    marcarAsignadosLocal: noop, closeConfirm: noop, valeForm: { reset: noop }, clearCart: noop,
+    updateCategoriaAuto: noop, fechaAnteriorToggle: {}, fechaValeInput: {}, todayInput: () => "2026-11-15",
+    updateFechaToggle: noop, personaSelect: { focus: noop }, showToast: noop, loadVales: async () => {},
+    openQrModal: noop, makeQrCode: () => { throw new Error("no se deben emitir QR de prueba"); },
+    console: { error: (e) => { throw e; } },
+  };
+  const doSave = vm.runInNewContext(`(${extraerFuncion(appCode, "async function doSave(")})`, ctx);
+  await doSave();
+  assert.equal(commits, 1);
+  assert.equal(writes.length, cantidad * 2);
+  for (const alta of writes.filter((w) => w.type === "set")) {
+    const asignacion = writes.find((w) => w.type === "update" && w.ref.folio === alta.data.folio);
+    assert.equal(asignacion.data.asignadoValeId, alta.ref.id);
+    assert.equal(asignacion.data.batchId, alta.data.batchId);
+    assert.equal(alta.data.esquema, 2);
+    assert.equal(alta.data.anulado, false);
+  }
+  ctx.pendingSave = { base: { fechaValeStr: "2026-11-15" }, items: [4000], picks: [null] };
+  await doSave();
+  assert.equal(commits, 1, "ni siquiera una denominación histórica puede guardarse sin folio");
+  assert.match(ctx.formError.textContent, /No hay existencias/);
+});
+
 test("el modal de confirmación enseña el folio reservado", () => {
   /* Sólo es posible porque la reserva ocurre ANTES de confirmar: así quien
      registra ve qué vale de papel va a entregar, y puede cotejarlo. */
@@ -330,6 +430,10 @@ test("el modal de confirmación enseña el folio reservado", () => {
   const abrir = extraerFuncion(appCode, "function openConfirm(");
   assert.match(abrir, /openConfirm\(base, items, picks\)/);
   assert.match(abrir, /mostrarFolios\(picks, items\)/);
+  // Persona, cantidad y total siguen a la vista.
+  assert.match(abrir, /cPersona\.textContent = base\.nombre/);
+  assert.match(abrir, /\$\{n\} \$\{n === 1 \? "vale" : "vales"\}/);
+  assert.match(abrir, /cTotal\.textContent = money\(sum\(items\)\)/);
   // Y se le pasan los folios de verdad desde el envío del formulario.
   assert.match(appCode, /openConfirm\(base, items, revision\.picks\)/);
 });
@@ -389,9 +493,8 @@ await testAsync("confirmación: un renglón por vale, monto junto a su folio", a
   assert.equal(lineasFolios(veinte.map(() => 200), veinte).length, 20);
 });
 
-
-test("el QR de prueba sigue existiendo sólo para montos sin inventario", () => {
-  // makeQrCode() no desaparece: $4,000 y futuras denominaciones lo necesitan.
+test("el registro exige inventario aunque permanezcan utilidades del QR histórico", () => {
+  // Se conserva la utilidad anterior; no autoriza nuevas altas sin folio.
   assert.match(appCode, /function makeQrCode\(/);
   assert.match(appCode, /SPECTRO-FUEL-\$\{year\}/);
   // Pero el registro ya no puede llegar ahí a ciegas: el bloqueo va antes.
@@ -401,9 +504,7 @@ test("el QR de prueba sigue existiendo sólo para montos sin inventario", () => 
 });
 
 test("todas las denominaciones ofrecidas salen del inventario", () => {
-  // Si algún día MONTOS ofrece algo que no está en INVENTARIO_MONTOS, ese
-  // monto usaría el QR generado: que sea una decisión consciente, no un
-  // descuido. Hoy coinciden.
+  // Una denominación nueva requiere inventario y soporte explícito en reglas.
   for (const m of MONTOS) {
     assert.ok(
       INVENTARIO_MONTOS.includes(m),
@@ -572,7 +673,7 @@ test("el repo sigue sin package.json ni node_modules", () => {
   assert.ok(!fs.existsSync("node_modules"));
 });
 
-test("no se tocaron las reglas ni los índices de Firestore", () => {
+test("los índices siguen vacíos (las reglas se prueban en el emulador)", () => {
   // Las consultas nuevas son dos filtros de igualdad + limit(): Firestore las
   // sirve con los índices de campo único que crea solo.
   assert.deepEqual(JSON.parse(fs.readFileSync("firestore.indexes.json", "utf8")), {

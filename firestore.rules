@@ -34,6 +34,7 @@ rules_version = '2';
 //    - anulado:        bool      (opcional; borrado suave)
 //    - anuladoEn:      timestamp (opcional; cuándo se anuló)
 //    - batchId:        string    (opcional, <=64; id del lote para dedupe)
+//    - esquema:        int       (2 obligatorio en altas nuevas; ausente en históricos)
 //    - qrCode:         string    (opcional, <=64; código del vale: COMBUSA-{FOLIO}
 //                                 si sale del inventario, o el código de prueba
 //                                 SPECTRO-FUEL-{AÑO}-{8 CHARS} si no)
@@ -64,6 +65,13 @@ rules_version = '2';
 //    - asignadoA:      string   (o null; persona a la que se asignó)
 //    - asignadoEn:     timestamp(o null; cuándo se asignó)
 //    - batchId:        string   (o null, <=64; lote de registro que lo asignó)
+//    - asignadoValeId: string   (ID exacto del vale dueño; requerido al asignar,
+//                                null al devolver; puede faltar en históricos)
+//    - devueltoPorVale: string  (opcional; ID del vale cuya anulación devolvió
+//                                el folio por última vez. Sólo se escribe en
+//                                la devolución: es lo que permite a las reglas
+//                                comprobar que la devolución corresponde a la
+//                                asignación vigente. Ver invIsReturn().)
 //    - importadoEn:    timestamp(requerido; serverTimestamp() de la importación)
 //    - importadoPor:   string   (requerido, 1..100)
 //
@@ -79,7 +87,7 @@ service cloud.firestore {
       return request.resource.data.keys().hasOnly(
         ['nombre', 'categoria', 'monto', 'fechaVale', 'fecha', 'createdAt',
          'registradoPor', 'notas', 'anulado', 'anuladoEn', 'batchId', 'qrCode',
-         'folio', 'vencimiento']
+         'folio', 'vencimiento', 'esquema']
       );
     }
 
@@ -142,16 +150,35 @@ service cloud.firestore {
              isValidOptionalAnulado() &&
              isValidOptionalBatchId() &&
              isValidOptionalQrCode() &&
-             isValidOptionalFolio();
+             isValidOptionalFolio() &&
+             (!('esquema' in request.resource.data) || request.resource.data.esquema == 2);
     }
 
-    // CREATE: esquema NUEVO estricto (siempre fechaVale + createdAt).
-    function isValidNewVale() {
+    function nuevaAsignacionCorresponde(valeId) {
+      let inv = getAfter(/databases/$(database)/documents/inventario/$(request.resource.data.folio)).data;
+      return inv.status == 'asignado' &&
+             inv.asignadoValeId == valeId &&
+             inv.batchId == request.resource.data.batchId &&
+             inv.monto == request.resource.data.monto &&
+             inv.asignadoEn == request.time;
+    }
+
+    // Toda alta usa el esquema nuevo y un folio real. Las excepciones legacy
+    // sólo consultan resource en UPDATE: omitir esquema/folio no abre un alta.
+    function isValidNewVale(valeId) {
       return hasOnlyAllowedFields() &&
              hasValidCommonFields() &&
+             valeId.matches('^[A-Za-z0-9_-]{1,64}$') &&
+             request.resource.data.esquema == 2 &&
+             request.resource.data.monto in [200, 300, 500, 1000] &&
+             request.resource.data.folio is string &&
+             isValidString('batchId', 1, 64) &&
+             request.resource.data.anulado == false &&
+             !('anuladoEn' in request.resource.data) &&
              request.resource.data.fechaVale is timestamp &&
              request.resource.data.createdAt is timestamp &&
-             request.resource.data.createdAt == request.time;
+             request.resource.data.createdAt == request.time &&
+             nuevaAsignacionCorresponde(valeId);
     }
 
     // UPDATE: tolera documentos ANTIGUOS (campo 'fecha' en vez de 'fechaVale',
@@ -160,19 +187,76 @@ service cloud.firestore {
     function isValidUpdatedVale() {
       return hasOnlyAllowedFields() &&
              hasValidCommonFields() &&
-             (request.resource.data.fechaVale is timestamp ||
-              request.resource.data.fecha is timestamp) &&
+             // Con .get(campo, null): leer directamente un campo que no existe
+             // da un ERROR de evaluación (no `false`), y eso impedía anular
+             // justo los vales antiguos que sólo tienen 'fecha'.
+             (request.resource.data.get('fechaVale', null) is timestamp ||
+              request.resource.data.get('fecha', null) is timestamp) &&
              (!('createdAt' in request.resource.data) ||
               request.resource.data.createdAt is timestamp);
     }
 
-    function isValidValeAnnulment() {
+    function devolucionExacta(valeId) {
+      let antes = get(/databases/$(database)/documents/inventario/$(resource.data.folio)).data;
+      let despues = getAfter(/databases/$(database)/documents/inventario/$(resource.data.folio)).data;
+      return antes.status == 'asignado' &&
+             antes.get('asignadoValeId', null) == valeId &&
+             antes.batchId == resource.data.batchId &&
+             despues.status == 'disponible' &&
+             despues.asignadoValeId == null &&
+             despues.devueltoPorVale == valeId;
+    }
+
+    // Histórico CON folio (anterior a `esquema`): se puede anular y devolver
+    // su folio sólo si el vínculo se demuestra con lo que sí guardaba la
+    // versión anterior. TODAS las condiciones:
+    //   · vale sin 'esquema', con folio string y batchId string no vacío;
+    //   · inventario ANTES: 'asignado', mismo batchId, mismo monto y SIN
+    //     asignadoValeId (si lo tiene, el folio es de un vale nuevo, no de éste);
+    //   · inventario DESPUÉS (mismo lote): 'disponible', batchId y
+    //     asignadoValeId null, devueltoPorVale == ID de este vale.
+    // El orden importa: las guardas van antes de construir la ruta del folio.
+    function devolucionHistorica(valeId) {
+      return !('esquema' in resource.data) &&
+             resource.data.get('folio', null) is string &&
+             resource.data.get('batchId', null) is string &&
+             resource.data.batchId.size() > 0 &&
+             devolucionHistoricaInventario(valeId);
+    }
+
+    function devolucionHistoricaInventario(valeId) {
+      let antes = get(/databases/$(database)/documents/inventario/$(resource.data.folio)).data;
+      let despues = getAfter(/databases/$(database)/documents/inventario/$(resource.data.folio)).data;
+      return antes.status == 'asignado' &&
+             antes.get('batchId', null) == resource.data.batchId &&
+             antes.monto == resource.data.monto &&
+             antes.get('asignadoValeId', null) == null &&
+             despues.status == 'disponible' &&
+             despues.get('batchId', null) == null &&
+             despues.get('asignadoValeId', null) == null &&
+             despues.get('devueltoPorVale', null) == valeId;
+    }
+
+    function isValidValeAnnulment(valeId) {
       return isValidUpdatedVale() &&
+             // Un vale se anula UNA sola vez. Sin esto, un dispositivo con la
+             // lista desactualizada podía "volver a anular" un vale ya anulado
+             // y, de paso, devolver al inventario un folio que para entonces
+             // ya pertenecía a otro vale (folio duplicado).
+             resource.data.get('anulado', false) != true &&
              request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['anulado', 'anuladoEn']) &&
              request.resource.data.anulado == true &&
              request.resource.data.anuladoEn is timestamp &&
-             request.resource.data.anuladoEn == request.time;
+             request.resource.data.anuladoEn == request.time &&
+             // Tres rutas, y ninguna más:
+             //  1. histórico que nunca tuvo folio: se anula sin inventario;
+             //  2. esquema 2: devolución por ID exacto del vale;
+             //  3. histórico con folio: devolución demostrable por lote y monto
+             //     (devolucionHistorica). Si no se demuestra, requiere revisión.
+             ((!('esquema' in resource.data) && !('folio' in resource.data)) ||
+              (resource.data.get('esquema', null) == 2 && devolucionExacta(valeId)) ||
+              devolucionHistorica(valeId));
     }
 
     // --------- Colección de vales ---------
@@ -181,9 +265,9 @@ service cloud.firestore {
       allow read: if true;
 
       // Escritura pública, pero SÓLO si el documento cumple el esquema.
-      allow create: if isValidNewVale();
+      allow create: if isValidNewVale(valeId);
       // El borrado suave (anular) es un 'update'; tolera documentos antiguos.
-      allow update: if isValidValeAnnulment();
+      allow update: if isValidValeAnnulment(valeId);
 
       // Sin borrado físico: se usa borrado suave (anulado = true).
       allow delete: if false;
@@ -202,7 +286,7 @@ service cloud.firestore {
         return request.resource.data.keys().hasOnly(
           ['folio', 'monto', 'status', 'vencimiento', 'qrImageBase64',
            'decodeError', 'decodedPayload', 'asignadoA', 'asignadoEn',
-           'batchId', 'importadoEn', 'importadoPor']
+           'batchId', 'importadoEn', 'importadoPor', 'devueltoPorVale', 'asignadoValeId']
         );
       }
 
@@ -270,6 +354,8 @@ service cloud.firestore {
                invNullableString('asignadoA', 100) &&
                invNullableTimestamp('asignadoEn') &&
                invNullableString('batchId', 64) &&
+               invNullableString('devueltoPorVale', 64) &&
+               invNullableString('asignadoValeId', 64) &&
                request.resource.data.importadoEn is timestamp &&
                request.resource.data.importadoPor is string &&
                request.resource.data.importadoPor.size() >= 1 &&
@@ -288,6 +374,9 @@ service cloud.firestore {
                request.resource.data.asignadoA == null &&
                request.resource.data.asignadoEn == null &&
                request.resource.data.batchId == null &&
+               // Un folio recién importado nunca ha sido devuelto.
+               !('devueltoPorVale' in request.resource.data) &&
+               request.resource.data.get('asignadoValeId', null) == null &&
                request.resource.data.importadoEn == request.time;
       }
 
@@ -300,12 +389,26 @@ service cloud.firestore {
                  .hasOnly(['status']);
       }
 
-      // Asignación normal desde el pool disponible.
+      // El vale debe CREARSE en este lote, no ser un registro previo ni una
+      // copia. getAfter consulta documentos del lote; exists comprueba antes.
+      // No añadir lecturas externas por folio sin volver a probar MAX_VALES=20.
+      function invValeNuevoCorresponde(valeId) {
+        let despues = getAfter(/databases/$(database)/documents/vales/$(valeId)).data;
+        return !exists(/databases/$(database)/documents/vales/$(valeId)) &&
+               despues.esquema == 2 &&
+               despues.createdAt == request.time &&
+               despues.anulado == false &&
+               despues.folio == folio &&
+               despues.batchId == request.resource.data.batchId &&
+               despues.monto == resource.data.monto;
+      }
+
+      // Asignación normal desde el pool disponible, ligada al ID exacto.
       function invIsAssignment() {
         return resource.data.status == 'disponible' &&
                request.resource.data.status == 'asignado' &&
                request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId', 'asignadoValeId']) &&
                request.resource.data.asignadoA is string &&
                request.resource.data.asignadoA.size() >= 1 &&
                request.resource.data.asignadoA.size() <= 100 &&
@@ -313,18 +416,56 @@ service cloud.firestore {
                request.resource.data.asignadoEn == request.time &&
                request.resource.data.batchId is string &&
                request.resource.data.batchId.size() >= 1 &&
-               request.resource.data.batchId.size() <= 64;
+               request.resource.data.batchId.size() <= 64 &&
+               request.resource.data.asignadoValeId is string &&
+               request.resource.data.asignadoValeId.matches('^[A-Za-z0-9_-]{1,64}$') &&
+               invValeNuevoCorresponde(request.resource.data.asignadoValeId);
       }
 
-      // Al anular un registro, el vale asignado vuelve al inventario.
+      // La devolución tiene que corresponder a la asignación VIGENTE. El vale
+      // `valeId` debe, en este mismo lote, pasar de activo a anulado; y ser el
+      // dueño actual del folio: ID exacto, además de folio y lote. Si el vale
+      // no existe, .data falla y la regla deniega.
+      //
+      // Dos formas de demostrar que el vale es el dueño:
+      //  · esquema 2: asignadoValeId == ID del vale (sin cambios);
+      //  · histórico (vale sin 'esquema'): el folio no tiene asignadoValeId y
+      //    coinciden folio, batchId (string no vacío) y monto. Es la misma
+      //    condición que comprueba devolucionHistorica() del lado del vale.
+      function invDevolucionCorresponde(valeId) {
+        let antes = get(/databases/$(database)/documents/vales/$(valeId)).data;
+        let despues = getAfter(/databases/$(database)/documents/vales/$(valeId)).data;
+        return antes.get('anulado', false) != true &&
+               despues.get('anulado', false) == true &&
+               antes.get('folio', null) == folio &&
+               antes.get('batchId', null) != null &&
+               antes.get('batchId', null) == resource.data.batchId &&
+               ((resource.data.get('asignadoValeId', null) == valeId &&
+                 antes.get('esquema', null) == 2) ||
+                (resource.data.get('asignadoValeId', null) == null &&
+                 !('esquema' in antes) &&
+                 antes.batchId is string &&
+                 antes.batchId.size() > 0 &&
+                 antes.get('monto', null) == resource.data.monto));
+      }
+
+      // Al anular un registro, el vale asignado vuelve al inventario. Sólo
+      // dentro del lote que anula al vale dueño de la asignación vigente: una
+      // devolución suelta, o desde un vale viejo cuyo folio ya se reasignó,
+      // se rechaza.
       function invIsReturn() {
         return resource.data.status == 'asignado' &&
                request.resource.data.status == 'disponible' &&
                request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId']) &&
+                 .hasOnly(['status', 'asignadoA', 'asignadoEn', 'batchId',
+                           'devueltoPorVale', 'asignadoValeId']) &&
                request.resource.data.asignadoA == null &&
                request.resource.data.asignadoEn == null &&
-               request.resource.data.batchId == null;
+               request.resource.data.batchId == null &&
+               request.resource.data.asignadoValeId == null &&
+               request.resource.data.devueltoPorVale is string &&
+               request.resource.data.devueltoPorVale.matches('^[A-Za-z0-9_-]{1,64}$') &&
+               invDevolucionCorresponde(request.resource.data.devueltoPorVale);
       }
 
       // UPDATE: los datos físicos y el resultado de jsQR son inmutables; sólo

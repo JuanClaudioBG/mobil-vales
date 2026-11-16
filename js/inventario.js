@@ -169,10 +169,16 @@ function capitalize(s) {
 // deja `poolError` puesto y eso BLOQUEA el registro de las denominaciones que
 // salen del inventario (ver inventarioIlegible()). El registro con QR generado
 // queda sólo para las denominaciones fuera de INVENTARIO_MONTOS.
-export function ensurePool() {
+export function ensurePool({ fresco = false } = {}) {
   // Si el intento anterior falló, se vuelve a probar (puede haber sido un fallo
   // puntual, una red móvil intermitente o unas reglas recién desplegadas).
-  if (!stockPromise || poolError) stockPromise = cargarStock();
+  //
+  // `fresco: true` vuelve a contar SIEMPRE. Lo pide el registro antes de
+  // decidir si hay existencias: los conteos del arranque pueden tener horas, y
+  // un PDF importado desde otro celular no se veía hasta recargar la página
+  // (el registro se bloqueaba con un "sin inventario" que ya no era cierto).
+  // Son 5 COUNT de ~150 bytes, sin descargar ningún folio.
+  if (fresco || !stockPromise || poolError) stockPromise = cargarStock();
   return stockPromise;
 }
 
@@ -412,12 +418,13 @@ export function inventarioDocRef(folio) {
 }
 
 // Campos que marcan un vale como asignado.
-export function camposAsignacion(nombre, batchId) {
+export function camposAsignacion(nombre, batchId, valeId) {
   return {
     status: "asignado",
     asignadoA: nombre,
     asignadoEn: serverTimestamp(),
     batchId: batchId || null,
+    asignadoValeId: valeId,
   };
 }
 
@@ -434,37 +441,52 @@ export function marcarAsignadosLocal(asignados) {
 }
 
 // Campos que DEVUELVEN un vale al inventario (al anular el vale que lo usaba).
-// Sólo toca las cuatro claves que las reglas permiten modificar; el folio, el
-// monto, el vencimiento y la imagen del QR siguen intactos.
-export function camposDevolucion() {
+// Sólo toca las claves que las reglas permiten modificar; el folio, el monto,
+// el vencimiento y la imagen del QR siguen intactos.
+//
+// `devueltoPorVale` (ID del vale que se anula) es OBLIGATORIO para las reglas:
+// con él comprueban, en el mismo lote, que ese vale pasa de activo a anulado y
+// que es el dueño de la asignación vigente (mismo folio y mismo batchId). Sin
+// eso, un vale viejo podía devolver un folio que ya era de otro.
+export function camposDevolucion(valeId) {
   return {
     status: "disponible",
     asignadoA: null,
     asignadoEn: null,
     batchId: null,
+    asignadoValeId: null,
+    devueltoPorVale: String(valeId),
   };
 }
 
-/* ¿Existe el documento de inventario de este folio? Los vales de pruebas
-   antiguas traen folios que ya no están en la colección: en ese caso se anula
-   el vale sin tocar el inventario.
+/* Asignación VIGENTE de un folio, leída del servidor, para decidir al anular
+   si el folio se devuelve. Devuelve { existe, status, batchId, asignadoValeId, monto }.
+   La ausencia del folio o de su dueño exacto requiere revisión: no demuestra
+   que sea un registro de pruebas ni permite deducir propiedad por lote.
 
-   LANZA si no se puede leer, y eso es deliberado. Antes devolvía false ante
+   LANZA si no se puede leer, y eso es deliberado. Antes se devolvía false ante
    cualquier error, de modo que un fallo de red se confundía con "este folio ya
    no existe": al anular, el vale se marcaba anulado y el folio se quedaba para
-   siempre en 'asignado', apuntando a un vale anulado. Esa combinación no se
-   puede deshacer desde la aplicación —un vale anulado ya no ofrece Anular, y
-   Aprobar sólo pasa de 'revision_requerida' a 'disponible'—, así que había que
-   arreglarla a mano en la consola de Firebase.
+   siempre en 'asignado', apuntando a un vale anulado.
 
    getDocFromServer por la misma razón que en el resto: getDoc() se conforma
    con la caché local, y como la app no activa persistencia esa caché está
    vacía en cada carga, así que sin red habría devuelto "no existe" en vez de
    fallar. Un documento ausente SÍ se distingue de un fallo de lectura: el
    servidor responde con un snapshot cuyo exists() es false. */
-export async function existeFolio(folio) {
+export async function asignacionDeFolio(folio) {
   const snap = await withRetry(() => getDocFromServer(inventarioDocRef(folio)));
-  return snap.exists();
+  if (!snap.exists()) {
+    return { existe: false, status: null, batchId: null, asignadoValeId: null, monto: null };
+  }
+  const datos = snap.data();
+  return {
+    existe: true, status: datos.status || null, batchId: datos.batchId || null,
+    asignadoValeId: datos.asignadoValeId || null,
+    // El monto sirve para demostrar el vínculo de un vale HISTÓRICO (sin
+    // asignadoValeId): las reglas exigen el mismo monto en vale e inventario.
+    monto: datos.monto ?? null,
+  };
 }
 
 // Caché en memoria del QR de los folios que se han vuelto a consultar desde el
@@ -507,6 +529,12 @@ export async function qrImagenDeFolio(folio) {
 export async function refrescarInventario() {
   todosCargados = false;
   await refreshStock();
+}
+
+// Vuelve a contar las existencias en segundo plano (botones «↻ Actualizar»).
+// Nunca rechaza: un fallo queda en poolError y lo enseña quien registre.
+export function refrescarExistencias() {
+  return refreshStock();
 }
 
 // ===========================================================================
@@ -682,8 +710,17 @@ function hideError() {
 export async function renderInventarioAdmin(force = false) {
   try {
     hideError();
-    await cargarTodos(force);
+    // «↻ Actualizar» (force) refresca la tabla Y los conteos que usa el
+    // registro. Antes sólo recargaba la tabla: las tarjetas se veían al día,
+    // pero el registro seguía decidiendo con los conteos del arranque.
+    await Promise.all([cargarTodos(force), force ? refreshStock() : null]);
     renderInventario();
+    if (force && poolError) {
+      showError(
+        "No pudimos consultar las existencias. La tabla sí se actualizó; " +
+          "vuelve a pulsar «Actualizar» antes de registrar."
+      );
+    }
   } catch (err) {
     console.error("[inventario] carga:", err);
     const code = err && err.code ? ` (${err.code})` : "";

@@ -65,8 +65,8 @@ export const DEPARTAMENTOS=['Pruebas'];export const PERSONAS=[{nombre:'Mariana E
   await page.click('#btn-confirmar');await page.waitForSelector('#qr-modal:not([hidden])');await page.waitForSelector('#qr-canvas canvas');
   const all=await get('vales');const created=all.documents.find(d=>field(d,'folio')==='007765');assert.ok(created);
   assert.equal(field(await get('inventario/007765'),'status'),'asignado');
-  assert.equal('esquema' in created.fields,false);
-  const assigned=await get('inventario/007765');assert.equal('asignadoValeId' in assigned.fields,false);assert.equal('devueltoPorVale' in assigned.fields,false);
+  assert.equal(field(created,'esquema'),'2');
+  const assigned=await get('inventario/007765');assert.equal(field(assigned,'asignadoValeId'),created.name.split('/').pop());assert.equal('devueltoPorVale' in assigned.fields,false);
   await page.keyboard.press('Escape');
   await page.locator('#vales-body').evaluate(el=>el.closest('.card').scrollIntoView({block:'start'}));
   await page.screenshot({path:path.join(out,`historial-${width}.png`),fullPage:true});
@@ -77,7 +77,14 @@ export const DEPARTAMENTOS=['Pruebas'];export const PERSONAS=[{nombre:'Mariana E
   await page.keyboard.press('Escape');
   async function annul(){await page.locator('#vales-body .btn-anular').click();await page.fill('#admin-pin-input','0000');await page.click('#admin-pin-ok');await page.waitForFunction(()=>document.querySelectorAll('#vales-body tr').length===0);}
   await annul();assert.equal(field(await get('inventario/007765'),'status'),'disponible');assert.equal(field(await get('vales/'+created.name.split('/').pop()),'anulado'),true);
-  for(const [q,id] of [['Histórico de prueba','legacy'],['999999','legacy-missing']]){await page.fill('#filtro-nombre',q);await annul();assert.equal(field(await get('vales/'+id),'anulado'),true);}
+  for(const [q,id] of [['Histórico de prueba','legacy']]){await page.fill('#filtro-nombre',q);await annul();assert.equal(field(await get('vales/'+id),'anulado'),true);}
+  // Histórico con folio que ya no existe: requiere revisión; vale e inventario idénticos.
+  {await page.fill('#filtro-nombre','999999');const antesVale=await get('vales/legacy-missing');
+   const aviso=new Promise(r=>page.once('dialog',d=>r(d.message())));
+   await page.locator('#vales-body .btn-anular').click();await page.fill('#admin-pin-input','0000');await page.click('#admin-pin-ok');
+   assert.match(await aviso,/Requiere revisión/);
+   assert.deepEqual((await get('vales/legacy-missing')).fields,antesVale.fields);
+   assert.equal((await fetch(api+'/inventario/999999')).status,404);await page.fill('#filtro-nombre','');}
   await page.click('[data-view="inventario"]');await page.selectOption('#inv-filtro-status','');await page.waitForSelector('#inv-body tr');
   assert.equal(await page.locator('#inv-body tr').count(),3);assert.equal(await page.locator('.inv-vence-pronto').count(),1);
   await page.screenshot({path:path.join(out,`inventario-${width}.png`),fullPage:true});

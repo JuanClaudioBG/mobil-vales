@@ -1,0 +1,23 @@
+// Sólo para un emulador aislado. NO son las reglas de la aplicación.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    match /externos/{id} {
+      allow create: if get(/databases/$(db)/documents/referencias/$(id)).data.valido == true;
+    }
+    match /excesos/{id} {
+      allow create: if
+        get(/databases/$(db)/documents/referencias/R0).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R1).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R2).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R3).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R4).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R5).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R6).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R7).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R8).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R9).data.valido == true &&
+        get(/databases/$(db)/documents/referencias/R10).data.valido == true;
+    }
+  }
+}

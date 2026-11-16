@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 
-import { withTimeout, withRetry } from "../js/utils.js";
+import { withTimeout, withRetry, folioDe } from "../js/utils.js";
 
 if (!fs.existsSync("js/app.js")) {
   console.error(
@@ -86,56 +86,202 @@ function extraerFuncion(src, firma) {
 }
 
 // ===========================================================================
-console.log("\n== 1. existeFolio ya no se traga los errores ==");
+console.log("\n== 1. asignacionDeFolio no se traga los errores ==");
 // ===========================================================================
+// (Antes era existeFolio(), que sólo decía si el folio existía. Ahora devuelve
+// además a qué registro está asignado, para devolverlo SÓLO si sigue siendo de
+// este vale. La garantía frente a la red es la misma.)
 
-const existeFolioSrc = extraerFuncion(invCode, "export async function existeFolio(");
+const asignacionSrc = extraerFuncion(invCode, "export async function asignacionDeFolio(");
 
 test("lee del servidor y con reintento", () => {
-  assert.match(existeFolioSrc, /withRetry\(/);
-  assert.match(existeFolioSrc, /getDocFromServer\(/);
+  assert.match(asignacionSrc, /withRetry\(/);
+  assert.match(asignacionSrc, /getDocFromServer\(/);
   assert.ok(
-    !/\bgetDoc\(/.test(existeFolioSrc),
+    !/\bgetDoc\(/.test(asignacionSrc),
     "getDoc() se conforma con la caché local, que en esta app está vacía"
   );
 });
 
 test("no queda ningún catch que devuelva false", () => {
   assert.ok(
-    !/catch/.test(existeFolioSrc),
+    !/catch/.test(asignacionSrc),
     "tragarse el error es justo lo que convertía 'sin red' en 'no existe'"
   );
 });
 
-function construirExisteFolio({ lanza, existe }) {
+function construirAsignacion({ lanza, existe, datos }) {
   const fabrica = new Function(
     "withRetry",
     "getDocFromServer",
     "inventarioDocRef",
-    `${existeFolioSrc}; return existeFolio;`
+    `${asignacionSrc}; return asignacionDeFolio;`
   );
   return fabrica(
     withRetry,
     async () => {
       if (lanza) throw Object.assign(new Error("Connection failed."), { code: "unavailable" });
-      return { exists: () => existe };
+      return { exists: () => existe, data: () => datos };
     },
     (f) => ({ folio: f })
   );
 }
 
-await testAsync("un folio presente devuelve true", async () => {
-  assert.equal(await construirExisteFolio({ existe: true })("117765"), true);
+await testAsync("un folio presente devuelve su asignación vigente", async () => {
+  const r = await construirAsignacion({ existe: true, datos: { status: "asignado", batchId: "lote-1", asignadoValeId: "v1", monto: 200 } })("117765");
+  assert.deepEqual(r, { existe: true, status: "asignado", batchId: "lote-1", asignadoValeId: "v1", monto: 200 });
 });
 
-await testAsync("un folio BORRADO devuelve false (no es un error)", async () => {
+await testAsync("un folio BORRADO devuelve existe:false (no es un error)", async () => {
   // Distinguir "no está" de "no se pudo leer" es justamente el objetivo.
-  assert.equal(await construirExisteFolio({ existe: false })("117765"), false);
+  const r = await construirAsignacion({ existe: false })("117765");
+  assert.deepEqual(r, { existe: false, status: null, batchId: null, asignadoValeId: null, monto: null });
 });
 
-await testAsync("si no se puede leer, LANZA (no devuelve false)", async () => {
-  const existeFolio = construirExisteFolio({ lanza: true });
-  await assert.rejects(() => existeFolio("117765"), /Connection failed/);
+await testAsync("si no se puede leer, LANZA (no devuelve 'no existe')", async () => {
+  const asignacionDeFolio = construirAsignacion({ lanza: true });
+  await assert.rejects(() => asignacionDeFolio("117765"), /Connection failed/);
+});
+
+// --- comprobarAntesDeAnular: el estado REAL del vale y de su folio ----------
+const comprobarSrc = extraerFuncion(appCode, "async function comprobarAntesDeAnular(");
+
+function construirComprobar({ vale, asignacion, lecturaFalla }) {
+  const lecturas = { vale: 0, folio: 0 };
+  const fabrica = new Function(
+    "withRetry", "getDocFromServer", "doc", "db", "COLLECTION", "folioDe", "asignacionDeFolio",
+    `${comprobarSrc}; return comprobarAntesDeAnular;`
+  );
+  const fn = fabrica(
+    withRetry,
+    async () => {
+      lecturas.vale++;
+      if (lecturaFalla) throw new Error("Connection failed.");
+      return { exists: () => vale !== null, data: () => vale };
+    },
+    () => ({}), {}, "vales", folioDe,
+    async () => { lecturas.folio++; return asignacion; }
+  );
+  return { fn, lecturas };
+}
+const FILA = { id: "v1", nombre: "Karen", folio: "117765" }; // lo que hay en pantalla
+
+await testAsync("vale YA anulado en el servidor ⇒ yaAnulado, sin mirar el inventario", async () => {
+  const { fn, lecturas } = construirComprobar({ vale: { anulado: true, folio: "117765", batchId: "lote-1" } });
+  assert.deepEqual(await fn(FILA), { yaAnulado: true, devolver: false, folioAjeno: false });
+  assert.equal(lecturas.folio, 0);
+});
+
+await testAsync("el folio sigue asignado a ESTE vale ⇒ se devuelve", async () => {
+  const { fn } = construirComprobar({
+    vale: { esquema: 2, anulado: false, folio: "117765", batchId: "lote-1" },
+    asignacion: { existe: true, status: "asignado", batchId: "lote-1", asignadoValeId: "v1" },
+  });
+  assert.deepEqual(await fn(FILA), { yaAnulado: false, devolver: true, folioAjeno: false, revisionNecesaria: false, folio: "117765" });
+});
+
+await testAsync("el folio ya es de OTRO registro ⇒ no se devuelve", async () => {
+  const { fn } = construirComprobar({
+    vale: { esquema: 2, anulado: false, folio: "117765", batchId: "lote-1" },
+    asignacion: { existe: true, status: "asignado", batchId: "lote-2", asignadoValeId: "v2" },
+  });
+  assert.deepEqual(await fn(FILA), { yaAnulado: false, devolver: false, folioAjeno: true, revisionNecesaria: false, folio: "117765" });
+});
+
+await testAsync("folio borrado del inventario ⇒ requiere revisión, no se anula", async () => {
+  const { fn } = construirComprobar({
+    vale: { esquema: 2, anulado: false, folio: "117765", batchId: "lote-1" },
+    asignacion: { existe: false, status: null, batchId: null, asignadoValeId: null },
+  });
+  assert.deepEqual(await fn(FILA), { yaAnulado: false, devolver: false, folioAjeno: false, revisionNecesaria: true, folio: "117765" });
+});
+
+await testAsync("vale sin folio ⇒ ni se consulta el inventario", async () => {
+  const { fn, lecturas } = construirComprobar({ vale: { anulado: false } });
+  assert.deepEqual(await fn({ id: "v1", nombre: "Karen", folio: null }),
+    { yaAnulado: false, devolver: false, folioAjeno: false });
+  assert.equal(lecturas.folio, 0);
+});
+
+await testAsync("si no se puede leer el vale, LANZA", async () => {
+  const { fn } = construirComprobar({ lecturaFalla: true });
+  await assert.rejects(() => fn(FILA), /Connection failed/);
+});
+
+await testAsync("copiar folio y lote no prueba propiedad en el cliente", async () => {
+  const { fn } = construirComprobar({
+    vale: { esquema: 2, anulado: false, folio: "117765", batchId: "lote-1" },
+    asignacion: { existe: true, status: "asignado", batchId: "lote-1", asignadoValeId: "otro-id" },
+  });
+  const previo = await fn(FILA);
+  assert.equal(previo.devolver, false);
+  assert.equal(previo.folioAjeno, true);
+});
+
+await testAsync("histórico con folio: devuelve SÓLO con lote, monto y sin dueño nuevo", async () => {
+  // Vale como los de producción: sin `esquema`, con folio, batchId y monto.
+  const vale = { folio: "117765", batchId: "lote-1", monto: 200 };
+  const suyo = { existe: true, status: "asignado", batchId: "lote-1", asignadoValeId: null, monto: 200 };
+  const ok = await construirComprobar({ vale, asignacion: suyo }).fn(FILA);
+  assert.equal(ok.devolver, true);
+  assert.equal(ok.folioAjeno, false);
+  assert.equal(ok.revisionNecesaria, false);
+  assert.equal(ok.folio, "117765");
+
+  // Folio con asignadoValeId de otro vale ⇒ folioAjeno (bloqueado).
+  const ajeno = await construirComprobar({ vale, asignacion: { ...suyo, asignadoValeId: "OTRO" } }).fn(FILA);
+  assert.equal(ajeno.devolver, false);
+  assert.equal(ajeno.folioAjeno, true);
+
+  // Cualquier otra diferencia ⇒ revisión (bloqueado), sin inferir propiedad.
+  for (const asignacion of [
+    { ...suyo, batchId: "otro-lote" },
+    { ...suyo, monto: 500 },
+    { ...suyo, status: "disponible", batchId: null },
+    { ...suyo, status: "canjeado" },
+    { existe: false, status: null, batchId: null, asignadoValeId: null, monto: null },
+  ]) {
+    const previo = await construirComprobar({ vale, asignacion }).fn(FILA);
+    assert.equal(previo.devolver, false, JSON.stringify(asignacion));
+    assert.equal(previo.revisionNecesaria, true, JSON.stringify(asignacion));
+  }
+
+  // Sin batchId (o vacío, o folio no textual): ni se consulta el inventario.
+  for (const v of [{ folio: "117765", monto: 200 }, { ...vale, batchId: "" }, { ...vale, folio: 117765 }]) {
+    const c = construirComprobar({ vale: v, asignacion: suyo });
+    const previo = await c.fn(FILA);
+    assert.equal(previo.revisionNecesaria, true);
+    assert.equal(c.lecturas.folio, 0);
+  }
+});
+
+await testAsync("histórico con inventario ilegible: LANZA (no se anula)", async () => {
+  const fabrica = new Function(
+    "withRetry", "getDocFromServer", "doc", "db", "COLLECTION", "folioDe", "asignacionDeFolio",
+    `${comprobarSrc}; return comprobarAntesDeAnular;`
+  );
+  const fn = fabrica(
+    withRetry,
+    async () => ({ exists: () => true, data: () => ({ folio: "117765", batchId: "lote-1", monto: 200 }) }),
+    () => ({}), {}, "vales", folioDe,
+    async () => { throw new Error("Connection failed."); }
+  );
+  await assert.rejects(() => fn(FILA), /Connection failed/);
+});
+
+await testAsync("esquema 2 sin dueño exacto sigue requiriendo revisión", async () => {
+  for (const asignacion of [
+    { existe: true, status: "asignado", batchId: "lote-1", asignadoValeId: null },
+    { existe: true, status: "disponible", batchId: null, asignadoValeId: null },
+    { existe: true, status: "asignado", batchId: "otro-lote", asignadoValeId: "v1" },
+  ]) {
+    const { fn } = construirComprobar({
+      vale: { esquema: 2, folio: "117765", batchId: "lote-1" }, asignacion,
+    });
+    const previo = await fn(FILA);
+    assert.equal(previo.devolver, false);
+    assert.equal(previo.revisionNecesaria, true);
+  }
 });
 
 // ===========================================================================
@@ -152,26 +298,32 @@ function construirAnular(escenario) {
     update: (ref, datos) => registro.updates.push({ ref, datos }),
   };
   const fabrica = new Function(
-    "requestAdminPin", "existeFolio", "writeBatch", "doc", "serverTimestamp",
+    "requestAdminPin", "comprobarAntesDeAnular", "writeBatch", "doc", "serverTimestamp",
     "inventarioDocRef", "camposDevolucion", "commitConTiempo", "refrescarInventario",
-    "showToast", "loadVales", "formatFolio", "alert", "db", "COLLECTION", "console",
+    "showToast", "loadVales", "formatFolio", "alert", "db", "COLLECTION", "console", "folioDe",
     `${anularSrc}; return anularVale;`
   );
   const anularVale = fabrica(
     async () => escenario.pin !== false,
     async () => {
       if (escenario.lecturaFalla) throw new Error("Connection failed.");
-      return escenario.folioExiste !== false;
+      return {
+        yaAnulado: Boolean(escenario.yaAnulado),
+        devolver: !escenario.yaAnulado && !escenario.folioAjeno && escenario.folioExiste !== false,
+        folioAjeno: Boolean(escenario.folioAjeno),
+        revisionNecesaria: Boolean(escenario.revisionNecesaria),
+      };
     },
     () => batch,
     (_db, _col, id) => ({ tipo: "vale", id }),
     () => "TS",
     (f) => ({ tipo: "inventario", folio: f }),
-    () => ({ status: "disponible", asignadoA: null, asignadoEn: null, batchId: null }),
+    (valeId) => ({ status: "disponible", asignadoA: null, asignadoEn: null, batchId: null, devueltoPorVale: valeId }),
     async () => {
       registro.commits++;
       if (escenario.commitFalla) {
-        return { ok: false, err: new Error("boom"), incierto: Boolean(escenario.incierto) };
+        const err = Object.assign(new Error("boom"), escenario.codigo ? { code: escenario.codigo } : {});
+        return { ok: false, err, incierto: Boolean(escenario.incierto) };
       }
       return { ok: true };
     },
@@ -181,7 +333,7 @@ function construirAnular(escenario) {
     (f) => String(f),
     (m) => registro.alertas.push(m),
     {}, "vales",
-    { error: () => {}, warn: () => {}, log: () => {} }
+    { error: () => {}, warn: () => {}, log: () => {} }, folioDe
   );
   return { anularVale, registro };
 }
@@ -213,25 +365,62 @@ await testAsync("camino normal: anula el vale y devuelve el folio en UN lote", a
   const folio = registro.updates.find((u) => u.ref.tipo === "inventario");
   assert.equal(vale.datos.anulado, true);
   assert.equal(folio.datos.status, "disponible");
+  assert.equal(folio.datos.devueltoPorVale, "v1", "las reglas exigen saber QUÉ vale devuelve el folio");
   assert.match(registro.toasts[0], /devuelto al inventario/);
   assert.deepEqual(registro.alertas, []);
 });
 
-await testAsync("folio realmente borrado: anula el vale y no toca inventario", async () => {
-  // Comportamiento histórico que hay que conservar (folios de pruebas viejas).
+await testAsync("vínculo no demostrable: mensaje claro y ninguna escritura", async () => {
+  const { anularVale, registro } = construirAnular({ folioExiste: false, revisionNecesaria: true });
+  await anularVale({ id: "v1", nombre: "Fixture", folio: "117765" });
+  assert.equal(registro.commits, 0);
+  assert.deepEqual(registro.updates, []);
+  assert.deepEqual(registro.toasts, []);
+  assert.match(registro.alertas[0], /no podemos comprobar el vínculo/);
+  assert.match(registro.alertas[0], /Requiere revisión/);
+});
+
+await testAsync("vale sin folio: se anula sin tocar el inventario", async () => {
   const { anularVale, registro } = construirAnular({ folioExiste: false });
-  await anularVale({ id: "v1", nombre: "Karen", folio: "117765" });
+  await anularVale({ id: "v1", nombre: "Karen", folio: null });
   assert.equal(registro.commits, 1);
   assert.equal(registro.updates.length, 1);
   assert.equal(registro.updates[0].ref.tipo, "vale");
-  assert.deepEqual(registro.toasts, ["✅ Vale anulado"]);
 });
 
-await testAsync("vale sin folio: ni se comprueba el inventario", async () => {
-  const { anularVale, registro } = construirAnular({ lecturaFalla: true });
-  await anularVale({ id: "v1", nombre: "Karen", folio: null });
-  assert.equal(registro.commits, 1, "sin folio no hay nada que leer");
-  assert.equal(registro.updates.length, 1);
+await testAsync("pantalla desactualizada: vale YA anulado ⇒ NI UNA escritura", async () => {
+  /* El fallo de la auditoría: otro dispositivo ya anuló este vale y su folio
+     pudo pasar a otra persona. Volver a anularlo devolvía ESE folio. */
+  const { anularVale, registro } = construirAnular({ yaAnulado: true });
+  await anularVale({ id: "v1", nombre: "Karen", folio: "117765" });
+  assert.equal(registro.commits, 0);
+  assert.equal(registro.updates.length, 0);
+  assert.match(registro.alertas[0], /ya estaba anulado/);
+  assert.deepEqual(registro.toasts, []);
+  assert.equal(registro.recargas, 1, "se refresca la lista para que deje de verse activo");
+});
+
+await testAsync("folio asignado a OTRO registro: anulación bloqueada, NI UNA escritura", async () => {
+  const { anularVale, registro } = construirAnular({ folioAjeno: true });
+  await anularVale({ id: "v1", nombre: "Karen", folio: "117765" });
+  assert.equal(registro.commits, 0);
+  assert.equal(registro.updates.length, 0);
+  assert.match(registro.alertas[0], /No se anuló: el folio 117765 está asignado a otro registro/);
+  assert.deepEqual(registro.toasts, []);
+});
+
+await testAsync("rechazo del servidor: no afirma el motivo y refresca la lista", async () => {
+  const { anularVale, registro } = construirAnular({
+    folioExiste: true, commitFalla: true, codigo: "permission-denied",
+  });
+  await anularVale({ id: "v1", nombre: "Karen", folio: "117765" });
+  assert.match(registro.alertas[0], /rechazó la anulación y no se hizo ningún cambio/);
+  assert.ok(
+    !/otro dispositivo|ya fue|colisi/i.test(registro.alertas[0]),
+    "un error de permisos no demuestra por sí solo la causa"
+  );
+  assert.deepEqual(registro.toasts, []);
+  assert.equal(registro.recargas, 1);
 });
 
 await testAsync("si el commit falla, no se anuncia como anulado", async () => {
@@ -336,7 +525,7 @@ await testAsync("el tiempo agotado sí queda marcado", async () => {
 const commitSrc = extraerFuncion(appCode, "async function commitConTiempo(");
 
 test("commitConTiempo pone tiempo de espera y NO reintenta", () => {
-  assert.match(commitSrc, /withTimeout\(batch\.commit\(\)\)/);
+  assert.match(commitSrc, /withTimeout\(seguido\)/);
   assert.ok(
     !/withRetry/.test(commitSrc),
     "reintentar una escritura puede duplicar vales: si el primer intento llegó " +
@@ -351,7 +540,7 @@ test("commitConTiempo pone tiempo de espera y NO reintenta", () => {
 });
 
 await testAsync("commitConTiempo distingue ok / fallo / incierto", async () => {
-  const fabrica = new Function("withTimeout", `${commitSrc}; return commitConTiempo;`);
+  const fabrica = new Function("withTimeout", `let commitsEnCurso = 0; ${commitSrc}; return commitConTiempo;`);
   const commitConTiempo = fabrica(withTimeout);
 
   assert.deepEqual(await commitConTiempo({ commit: async () => {} }), { ok: true });
@@ -369,6 +558,67 @@ await testAsync("commitConTiempo distingue ok / fallo / incierto", async () => {
   });
   assert.equal(colgado.ok, false);
   assert.equal(colgado.incierto, true, "hay que avisar de que pudo guardarse igual");
+});
+
+// Pruebas de coordinación del CLIENTE, con promesas controladas. No simulan
+// ni demuestran la atomicidad de Firestore (eso se prueba en el emulador).
+function clienteParaRecarga() {
+  const seguroSrc = extraerFuncion(appCode, "function isSafeToReload(");
+  return new Function("withTimeout", `
+    let commitsEnCurso = 0, saving = false, revisando = false;
+    const personaSelect = { value: '' }, carrito = new Map(), notasInput = { value: '' };
+    const confirmModal = { hidden: true }, qrModal = { hidden: true }, adminPinModal = { hidden: true };
+    const invProgress = { hidden: true };
+    ${commitSrc}
+    ${seguroSrc}
+    return { commitConTiempo, isSafeToReload, revisar: (valor) => { revisando = valor; } };
+  `)((p) => withTimeout(p, 30));
+}
+
+await testAsync("autoactualización espera los commits de anulación, incluso dos concurrentes", async () => {
+  const c = clienteParaRecarga();
+  const a = Promise.withResolvers(), b = Promise.withResolvers();
+  assert.equal(c.isSafeToReload(), true);
+  const primero = c.commitConTiempo({ commit: () => a.promise });
+  const segundo = c.commitConTiempo({ commit: () => b.promise });
+  assert.equal(c.isSafeToReload(), false);
+  a.resolve();
+  assert.deepEqual(await primero, { ok: true });
+  assert.equal(c.isSafeToReload(), false, "queda otro commit pendiente");
+  b.resolve();
+  assert.deepEqual(await segundo, { ok: true });
+  assert.equal(c.isSafeToReload(), true);
+});
+
+await testAsync("timeout no permite recargar mientras la escritura real sigue pendiente", async () => {
+  for (const resultado of ["confirmado", "rechazado"]) {
+    const c = clienteParaRecarga();
+    const p = Promise.withResolvers();
+    let envios = 0;
+    const r = await c.commitConTiempo({ commit: () => { envios++; return p.promise; } });
+    assert.equal(r.incierto, true);
+    assert.equal(c.isSafeToReload(), false);
+    if (resultado === "confirmado") p.resolve();
+    else p.reject(new Error("rechazo tardío"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(c.isSafeToReload(), true);
+    assert.equal(envios, 1, "sin recuperación ni reintento automático");
+  }
+});
+
+await testAsync("rechazo concluyente o excepción síncrona no bloquean futuras recargas", async () => {
+  const c = clienteParaRecarga();
+  for (const commit of [
+    () => Promise.reject(new Error("denegado")),
+    () => { throw new Error("preparación fallida"); },
+  ]) {
+    assert.equal((await c.commitConTiempo({ commit })).ok, false);
+    assert.equal(c.isSafeToReload(), true);
+  }
+  c.revisar(true);
+  assert.equal(c.isSafeToReload(), false);
+  c.revisar(false);
+  assert.equal(c.isSafeToReload(), true);
 });
 
 test("doSave y anularVale confirman a través de commitConTiempo", () => {
@@ -398,7 +648,7 @@ test("las importaciones del PDF siguen sin tocarse", () => {
 console.log("\n== 5. Nada fuera de alcance ==");
 // ===========================================================================
 
-test("no se tocaron las reglas ni los índices", () => {
+test("los índices siguen vacíos (esta prueba no verifica las reglas)", () => {
   assert.deepEqual(JSON.parse(fs.readFileSync("firestore.indexes.json", "utf8")), {
     indexes: [],
     fieldOverrides: [],
