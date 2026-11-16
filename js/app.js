@@ -1424,10 +1424,16 @@ function makeQrCode(anio) {
 let qrQueue = [];
 let qrIndex = 0;
 
-function openQrModal(vales) {
+// `indiceInicial` es opcional: el registro abre en el primer vale (0); «Ver»
+// del historial abre en el vale que se tocó dentro de su orden. Un índice
+// fuera de rango cae al primero.
+function openQrModal(vales, indiceInicial = 0) {
   if (!Array.isArray(vales) || vales.length === 0) return;
   qrQueue = vales;
-  qrIndex = 0;
+  qrIndex =
+    Number.isInteger(indiceInicial) && indiceInicial > 0 && indiceInicial < vales.length
+      ? indiceInicial
+      : 0;
   qrModal.hidden = false;
   renderQrVale();
 }
@@ -1710,7 +1716,8 @@ function uuid() {
 // ===========================================================================
 //  Si el usuario cierra el modal sin descargar ni compartir, el vale NO se ha
 //  perdido: sigue en Firestore con su código/folio. Esta sección lo vuelve a
-//  mostrar a partir de lo que hay guardado.
+//  mostrar a partir de lo que hay guardado, junto con los demás vales de su
+//  misma orden (mismo `batchId`), para poder repasarlos como al registrarlos.
 //
 //  Es SÓLO LECTURA. No emite nada ni toca nada: no llama a makeQrCode(),
 //  reservarFolios(), writeBatch() ni a ninguna escritura de Firestore, así que el
@@ -1782,7 +1789,32 @@ async function valeParaModal(v) {
   return modelo;
 }
 
-// Botón "Ver" de una fila: reabre ESE vale, sin crear ninguno nuevo.
+// Orden de los vales dentro de una orden reabierta: por folio ascendente; los
+// que no tienen folio van al final, en el orden en que ya estaban (sort() es
+// estable). El folio se compara como texto con orden numérico, sin Number().
+function compararPorFolio(a, b) {
+  const fa = folioDe(a);
+  const fb = folioDe(b);
+  if (!fa || !fb) return fa ? -1 : fb ? 1 : 0;
+  return fa.localeCompare(fb, "es", { numeric: true });
+}
+
+// Vales que se muestran al pulsar "Ver" en `v`: toda su orden. Sale de lo que
+// ya está cargado en `allVales`, sin consultar nada. Los anulados de la orden
+// se dejan fuera, salvo el propio `v` (un anulado se sigue pudiendo consultar).
+// Un vale sin `batchId` (anterior a las órdenes) se abre solo, como siempre.
+function valesDeLaOrden(v) {
+  const lote = typeof v.batchId === "string" ? v.batchId : "";
+  if (!lote) return { vales: [v], indice: 0 };
+  const esElTocado = (o) => o === v || (v.id != null && o.id === v.id);
+  const vales = allVales.filter((o) => o.batchId === lote && (!o.anulado || esElTocado(o)));
+  // `v` va siempre, aunque el historial se haya recargado entretanto.
+  if (!vales.some(esElTocado)) vales.push(v);
+  vales.sort(compararPorFolio);
+  return { vales, indice: vales.findIndex(esElTocado) };
+}
+
+// Botón "Ver" de una fila: reabre la orden de ese vale, sin crear ninguno nuevo.
 function botonVerVale(v) {
   const btn = document.createElement("button");
   btn.type = "button";
@@ -1797,7 +1829,11 @@ async function abrirValeExistente(v, btn) {
   if (btn.disabled) return; // evita reabrirlo dos veces mientras carga el QR
   btn.disabled = true;
   try {
-    openQrModal([await valeParaModal(v)]);
+    const { vales, indice } = valesDeLaOrden(v);
+    // Si alguno no se puede preparar no se abre nada: mejor el aviso que una
+    // orden a medias.
+    const modelos = await Promise.all(vales.map(valeParaModal));
+    openQrModal(modelos, indice);
   } catch (err) {
     console.error("[vales] no se pudo reabrir el vale:", err);
     alert(mensajeError(err, "abrir el vale"));
