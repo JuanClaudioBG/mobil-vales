@@ -1439,9 +1439,10 @@ btnComprobarGuardado.addEventListener("click", comprobarGuardadoAhora);
 // dos del anterior; si no, el ocultado pendiente escondía el nuevo al instante.
 let toastTimer = null;
 let toastHideTimer = null;
-function showToast(msg) {
+function showToast(msg, options) {
   clearTimeout(toastTimer);
   clearTimeout(toastHideTimer);
+  toastEl.classList.toggle("toast--error", options?.error === true);
   toastEl.textContent = msg;
   toastEl.hidden = false;
   toastEl.classList.add("show");
@@ -2974,7 +2975,7 @@ async function exportExcel() {
     showToast("✅ Excel generado");
   } catch (err) {
     console.error("Error al exportar a Excel:", err);
-    showToast("⚠️ No se pudo generar el Excel: " + mensajeExcel(err));
+    showToast("⚠️ No se pudo generar el Excel: " + mensajeExcel(err), { error: true });
   } finally {
     btnExcel.disabled = false;
     btnExcel.textContent = etiqueta;

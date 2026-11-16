@@ -2340,3 +2340,47 @@ tr.inv-row--vencido td {
     align-self: stretch;
   }
 }
+
+/* Ajustes de la auditoría visual: conservar marca y estructura actuales. */
+.qr-card {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+.toast--error {
+  background: #3a1d1d;
+  border-color: var(--danger);
+  color: #ffd9d6;
+}
+.badge { color: #0f1216; }
+.badge--asignado,
+.badge--canjeado { color: #fff; }
+/* AA para texto grande sobre el rojo de marca, sin modificar --accent. */
+button:not(.btn-secondary):not(.tab):not(.denom-btn):not(.btn-ver):not(.btn-anular):not(.btn-eliminar):not(.link-btn) {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.tab.active { font-weight: 700; }
+.tab { min-height: 44px; }
+@media (max-width: 399px) {
+  .tab-icon { display: none; }
+}
+.app-screen, .view, .card { min-width: 0; }
+::placeholder { color: var(--muted); opacity: 1; }
+.pin-screen { align-items: start; padding-top: 12dvh; }
+#admin-pin-modal { align-items: flex-start; padding-top: 12dvh; }
+.tab { white-space: nowrap; }
+.resumen-table td::before { flex-shrink: 0; overflow-wrap: normal; }
+.stat-trend, .btn-ver, .btn-anular { font-size: 0.8rem; }
+.modal-card .error { margin-bottom: 0.8rem; }
+@media (max-width: 768px) {
+  #admin-vales-body td:first-child { overflow-wrap: break-word; }
+  #view-admin table:not(.resumen-table) th:nth-child(3) { width: 3.6rem; }
+}
+@media (max-width: 480px) {
+  .admin-head, .dash-top-head { flex-wrap: wrap; }
+  .admin-head button { white-space: nowrap; }
+}
+@media (pointer: coarse) {
+  button, select, .switch-row { min-height: 44px; }
+  .denom-minus { width: 36px; height: 36px; }
+}

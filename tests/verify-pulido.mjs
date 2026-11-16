@@ -326,7 +326,7 @@ function toasts() {
   const clases = new Set();
   const toastEl = {
     textContent: "", hidden: true,
-    classList: { add: (c) => clases.add(c), remove: (c) => clases.delete(c) },
+    classList: { contains: (c) => clases.has(c), toggle: (c, on) => on ? clases.add(c) : clases.delete(c), add: (c) => clases.add(c), remove: (c) => clases.delete(c) },
   };
   const src = appCode.slice(appCode.indexOf("let toastTimer = null;"), appCode.indexOf("function showToast("));
   const showToast = new Function(
@@ -350,6 +350,13 @@ function toasts() {
   };
   return { showToast, avanzar, toastEl, visible: () => !toastEl.hidden && clases.has("show"), pendientes };
 }
+await test("toast de error y posterior éxito recuperan sus colores", () => {
+  const t = toasts();
+  t.showToast("⚠️ Prueba", { error: true });
+  assert.equal(t.toastEl.classList.contains("toast--error"), true);
+  t.showToast("✅ Prueba");
+  assert.equal(t.toastEl.classList.contains("toast--error"), false);
+});
 await test("un toast solo: 3 s visible y oculto 300 ms después (como antes)", () => {
   const t = toasts();
   t.showToast("uno");

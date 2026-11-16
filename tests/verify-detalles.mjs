@@ -198,7 +198,7 @@ await test("sin código ni mensaje: genérico", () => {
 });
 await test("exportExcel ya no enseña err.message crudo", () => {
   const cuerpo = soloCodigo(extraerFuncion(app, "async function exportExcel("));
-  assert.match(cuerpo, /showToast\("⚠️ No se pudo generar el Excel: " \+ mensajeExcel\(err\)\);/);
+  assert.match(cuerpo, /showToast\("⚠️ No se pudo generar el Excel: " \+ mensajeExcel\(err\), \{ error: true \}\);/);
   assert.ok(!cuerpo.includes("err.message"));
 });
 
