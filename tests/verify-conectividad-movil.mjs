@@ -338,12 +338,17 @@ test("«Registrar vales» se protege del doble toque", () => {
   const i = app.indexOf('valeForm.addEventListener("submit"');
   const envio = app.slice(i, app.indexOf("/* Comprueba el inventario y RESERVA", i));
   // Candado lógico antes de cualquier trabajo.
-  assert.match(envio, /if \(revisando \|\| saving \|\| !confirmModal\.hidden\) return;/);
+  // Incluye el guardado incierto: con un lote sin resolver no se reserva otro.
+  assert.match(envio, /if \(revisando \|\| saving \|\| registroIncierto \|\| !confirmModal\.hidden\) return;/);
   // Bloqueo visible desde el primer toque…
   assert.match(envio, /revisando = true;\s*btnRegistrar\.disabled = true;/);
   assert.match(envio, /Consultando inventario…/);
   // …y restauración garantizada, también si la consulta lanza.
-  assert.match(envio, /finally \{\s*revisando = false;\s*btnRegistrar\.disabled = false;\s*actualizarAccionRegistro\(\);/);
+  // actualizarAccionRegistro() rehabilita el botón salvo con un guardado incierto.
+  assert.match(envio, /finally \{\s*revisando = false;\s*actualizarAccionRegistro\(\);/);
+  const accion = extraerFuncion(appCode, "function actualizarAccionRegistro(");
+  assert.match(accion, /if \(registroIncierto\) \{\s*btnRegistrar\.disabled = true;/);
+  assert.match(accion, /btnRegistrar\.disabled = false;/);
   assert.match(fs.readFileSync("index.html", "utf8"), /<button type="submit" id="btn-registrar">/);
 });
 
@@ -403,7 +408,13 @@ await testAsync("doSave real vincula cada ID generado con su inventario en el mi
     openQrModal: noop, makeQrCode: () => { throw new Error("no se deben emitir QR de prueba"); },
     console: { error: (e) => { throw e; } },
   };
-  const doSave = vm.runInNewContext(`(${extraerFuncion(appCode, "async function doSave(")})`, ctx);
+  ctx.registroIncierto = null;
+  ctx.mostrarErrorGuardado = (e) => { throw e; };
+  ctx.vigilarRegistroIncierto = () => { throw new Error("no debe quedar incierto"); };
+  ctx.formError = {};
+  const doSave = vm.runInNewContext(
+    `${extraerFuncion(appCode, "async function completarRegistro(")}; ` +
+    `(${extraerFuncion(appCode, "async function doSave(")})`, ctx);
   await doSave();
   assert.equal(commits, 1);
   assert.equal(writes.length, cantidad * 2);

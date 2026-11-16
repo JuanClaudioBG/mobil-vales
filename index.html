@@ -112,6 +112,11 @@
             <input id="notas" type="text" maxlength="500" />
           </label>
           <p id="form-error" class="error full" hidden></p>
+          <!-- Guardado con tiempo agotado y aún en curso: bloquea «Registrar». -->
+          <div id="guardado-incierto" class="aviso-incierto full" role="status" aria-live="polite" hidden>
+            <p id="guardado-incierto-msg"></p>
+            <button type="button" id="btn-comprobar-guardado" class="btn-secondary">Comprobar ahora</button>
+          </div>
           <div class="full">
             <button type="submit" id="btn-registrar">Registrar vales</button>
           </div>

@@ -2172,3 +2172,27 @@ tr.inv-row--vencido td {
 @media (max-width: 768px) {
   #view-inventario #inv-body td.inv-aux-empty { display: none; }
 }
+
+/* --- Guardado incierto (tiempo agotado, commit aún en curso) ---------- */
+/* Ámbar y no rojo: todavía no es un error, puede que sí se haya guardado. */
+.aviso-incierto {
+  border: 1px solid #d9a441;
+  border-left-width: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.aviso-incierto[hidden] {
+  display: none;
+}
+.aviso-incierto p {
+  margin: 0 0 0.6rem;
+}
+.aviso-incierto .btn-secondary {
+  width: 100%;
+  min-height: 44px; /* blanco táctil cómodo en celular */
+}

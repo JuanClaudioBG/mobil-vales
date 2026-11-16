@@ -536,7 +536,9 @@ test("commitConTiempo pone tiempo de espera y NO reintenta", () => {
     1,
     "una sola llamada a commit()"
   );
-  assert.match(commitSrc, /incierto: Boolean\(err && err\.esTimeout\)/);
+  assert.match(commitSrc, /const incierto = Boolean\(err && err\.esTimeout\);/);
+  // Con timeout entrega la promesa REAL para esperar su desenlace, no otra escritura.
+  assert.match(commitSrc, /pendiente: incierto \? seguido : null/);
 });
 
 await testAsync("commitConTiempo distingue ok / fallo / incierto", async () => {
@@ -633,9 +635,9 @@ test("doSave y anularVale confirman a través de commitConTiempo", () => {
 
 test("al guardar, el tiempo agotado avisa de que puede haberse guardado", () => {
   const doSave = extraerFuncion(appCode, "async function doSave(");
-  assert.match(doSave, /incierto/);
-  assert.match(app, /Puede que los vales SÍ se hayan/);
-  assert.match(app, /revisa el historial antes de volver a/);
+  assert.match(doSave, /fallo\.incierto && fallo\.pendiente && registro/);
+  assert.match(doSave, /vigilarRegistroIncierto\(registro, fallo\.pendiente\)/);
+  assert.match(app, /Puede que " \+\s*"los vales SÍ se guarden: no los registres de nuevo/);
 });
 
 test("las importaciones del PDF siguen sin tocarse", () => {

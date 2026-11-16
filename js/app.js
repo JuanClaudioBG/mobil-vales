@@ -102,6 +102,10 @@ const appScreen = $("#app-screen");
 const valeForm = $("#vale-form");
 const btnRegistrar = $("#btn-registrar");
 const formError = $("#form-error");
+// Aviso de guardado incierto (tiempo agotado con el commit aún en curso).
+const avisoIncierto = $("#guardado-incierto");
+const avisoInciertoMsg = $("#guardado-incierto-msg");
+const btnComprobarGuardado = $("#btn-comprobar-guardado");
 const tbody = $("#vales-body");
 const emptyState = $("#empty-state");
 const totalEl = $("#total-monto");
@@ -248,6 +252,13 @@ let revisando = false;
 // Incluye anulaciones y commits que siguen pendientes después del timeout.
 // La autoactualización debe esperar su resolución real, sin reintentarlos.
 let commitsEnCurso = 0;
+/* Registro cuyo commit agotó el tiempo pero SIGUE en curso:
+   { batchId, valeIds, items, base, savedVales, asignados }.
+   Mientras exista, «Registrar» queda bloqueado: volver a registrar reservaría
+   OTROS folios y, si el primer lote llega tarde, se consumirían de más. Sólo
+   lo libera el desenlace real del commit o una lectura del servidor que
+   confirme el vale. Vive en memoria; nunca se reintenta la escritura. */
+let registroIncierto = null;
 
 // Fuente de autocompletado de "Registrado por"
 let registradoresDistintos = [];
@@ -648,6 +659,12 @@ function renderExistenciasRegistro() {
 
 function actualizarAccionRegistro() {
   if (revisando) return;
+  if (registroIncierto) {
+    btnRegistrar.disabled = true;
+    btnRegistrar.innerHTML = '<span class="spinner"></span> Verificando guardado anterior…';
+    return;
+  }
+  btnRegistrar.disabled = false;
   const items = cartItems();
   btnRegistrar.textContent = items.length
     ? `Registrar ${items.length} ${items.length === 1 ? "vale" : "vales"} · ${money(items.reduce((total, monto) => total + monto, 0))}`
@@ -805,7 +822,8 @@ valeForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   // Doble toque: si ya hay una consulta en curso, una confirmación abierta o
   // un guardado en vuelo, este envío se ignora por completo.
-  if (revisando || saving || !confirmModal.hidden) return;
+  // Con un guardado anterior sin resolver tampoco: reservaría otros folios.
+  if (revisando || saving || registroIncierto || !confirmModal.hidden) return;
   formError.hidden = true;
 
   const persona = personaPorNombre.get(personaSelect.value);
@@ -857,8 +875,7 @@ valeForm.addEventListener("submit", async (e) => {
     revision = { problema: MSG_SIN_CONSULTA };
   } finally {
     revisando = false;
-    btnRegistrar.disabled = false;
-    actualizarAccionRegistro();
+    actualizarAccionRegistro(); // rehabilita el botón (o lo deja bloqueado)
   }
   if (revision.problema) {
     formError.textContent = revision.problema;
@@ -1055,12 +1072,16 @@ document.addEventListener("keydown", (e) => {
    error normal del servidor (permisos, validación, carrera por un folio) sí es
    concluyente: el lote es atómico, no se guardó nada y repetir es seguro.
 
-   Devuelve { ok } | { ok: false, err, incierto }. */
+   Devuelve { ok } | { ok: false, err, incierto, pendiente }. Con `incierto`,
+   `pendiente` es la promesa del commit REAL: quien llama puede esperar su
+   desenlace (resuelve = se guardó; rechaza = no se guardó nada). Sin
+   `incierto` vale null. */
 async function commitConTiempo(batch) {
+  let seguido = null;
   try {
     const pendiente = batch.commit();
     commitsEnCurso++;
-    const seguido = pendiente.then(
+    seguido = pendiente.then(
       () => { commitsEnCurso--; },
       (err) => { commitsEnCurso--; throw err; }
     );
@@ -1069,13 +1090,15 @@ async function commitConTiempo(batch) {
     await withTimeout(seguido);
     return { ok: true };
   } catch (err) {
-    return { ok: false, err, incierto: Boolean(err && err.esTimeout) };
+    const incierto = Boolean(err && err.esTimeout);
+    return { ok: false, err, incierto, pendiente: incierto ? seguido : null };
   }
 }
 
 // --- Guardar de verdad (tras confirmar) -------------------------------------
 async function doSave() {
-  if (saving || !pendingSave) return; // evita doble envío
+  // Evita doble envío y cualquier lote nuevo con otro aún sin resolver.
+  if (saving || !pendingSave || registroIncierto) return;
   saving = true;
 
   const { base, items, picks } = pendingSave;
@@ -1118,12 +1141,17 @@ async function doSave() {
     return;
   }
   const asignados = []; // picks asignados: marcarAsignadosLocal() necesita el monto
+  // IDs de los vales, generados en el cliente ANTES del commit: si se agota
+  // el tiempo, permiten comprobar en el servidor si el lote llegó.
+  const valeIds = [];
+  let registro = null;
 
   try {
     const anio = parseDateInput(base.fechaValeStr).getFullYear();
     const batch = writeBatch(db);
     items.forEach((monto, i) => {
       const ref = doc(valesRef); // ID automático
+      valeIds.push(ref.id);
       const pick = picks[i];
       // Con folio del inventario el "código" del vale ES el folio de Combusa;
       // si no hay inventario para esa denominación se mantiene el código
@@ -1162,36 +1190,24 @@ async function doSave() {
         qrImageBase64: pick ? pick.qrImageBase64 : null,
       });
     });
+    registro = { batchId, valeIds, items, base, savedVales, asignados };
     const commit = await commitConTiempo(batch);
     if (!commit.ok) throw commit;
-    if (asignados.length) marcarAsignadosLocal(asignados);
-
-    const n = items.length;
-    const total = sum(items);
-    pendingSave = null;
-    closeConfirm();
-    valeForm.reset();
-    clearCart();
-    updateCategoriaAuto();
-    fechaAnteriorToggle.checked = false;
-    fechaValeInput.value = todayInput();
-    updateFechaToggle(); // oculta el picker, quita el resaltado y restaura la etiqueta
-    personaSelect.focus();
-    showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
-    await loadVales();
-    // Tras el toast de éxito, muestra el QR de cada vale del lote.
-    openQrModal(savedVales);
+    await completarRegistro(registro);
   } catch (fallo) {
     // `fallo` puede venir de commitConTiempo() (con la bandera `incierto`) o
     // ser una excepción cualquiera de la preparación del lote.
+    if (fallo && fallo.incierto && fallo.pendiente && registro) {
+      // Tiempo agotado: el lote puede llegar todavía. No se da por fallido
+      // ni se deja registrar otro: se espera el desenlace real.
+      pendingSave = null;
+      closeConfirm();
+      vigilarRegistroIncierto(registro, fallo.pendiente);
+      return;
+    }
     const err = fallo && fallo.err ? fallo.err : fallo;
     console.error("Error al guardar:", err);
-    formError.textContent = fallo && fallo.incierto
-      ? "Se agotó el tiempo al guardar. Puede que los vales SÍ se hayan " +
-        "guardado: pulsa «Actualizar» y revisa el historial antes de volver a " +
-        "registrarlos."
-      : "No se pudieron guardar los vales: " + (err && err.message ? err.message : err);
-    formError.hidden = false;
+    mostrarErrorGuardado(err);
     closeConfirm();
   } finally {
     saving = false;
@@ -1200,6 +1216,129 @@ async function doSave() {
     btnConfirmar.textContent = "Confirmar";
   }
 }
+
+function mostrarErrorGuardado(err) {
+  formError.textContent =
+    "No se pudieron guardar los vales: " + (err && err.message ? err.message : err);
+  formError.hidden = false;
+}
+
+/* Éxito de un lote: el commit se confirmó (a tiempo o tarde) o una lectura del
+   servidor encontró el vale. Idempotente: el commit tardío y «Comprobar
+   ahora» pueden llegar los dos, pero el formulario, el toast y los QR se
+   procesan una sola vez. */
+async function completarRegistro(reg) {
+  if (reg.terminado) return;
+  reg.terminado = true;
+  if (registroIncierto === reg) {
+    registroIncierto = null;
+    avisoIncierto.hidden = true;
+  }
+  if (reg.asignados.length) marcarAsignadosLocal(reg.asignados);
+
+  const n = reg.items.length;
+  const total = sum(reg.items);
+  pendingSave = null;
+  closeConfirm();
+  formError.hidden = true;
+  valeForm.reset();
+  clearCart(); // también restaura el texto de «Registrar»
+  updateCategoriaAuto();
+  fechaAnteriorToggle.checked = false;
+  fechaValeInput.value = todayInput();
+  updateFechaToggle(); // oculta el picker, quita el resaltado y restaura la etiqueta
+  personaSelect.focus();
+  showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
+  await loadVales();
+  // Tras el toast de éxito, muestra el QR de cada vale del lote.
+  openQrModal(reg.savedVales);
+}
+
+/* Rechazo del commit después del timeout. Es concluyente: el lote es atómico,
+   no se guardó nada y se puede volver a registrar. */
+function falloRegistroIncierto(reg, err) {
+  if (reg.terminado) return;
+  reg.terminado = true;
+  if (registroIncierto === reg) {
+    registroIncierto = null;
+    avisoIncierto.hidden = true;
+  }
+  console.error("Error al guardar (respuesta tras el tiempo de espera):", err);
+  mostrarErrorGuardado(err);
+  actualizarAccionRegistro();
+}
+
+const MSG_GUARDADO_TARDA =
+  "⏳ El guardado está tardando más de lo normal y sigue en curso. Puede que " +
+  "los vales SÍ se guarden: no los registres de nuevo. Te avisamos aquí en " +
+  "cuanto termine.";
+const MSG_GUARDADO_SIN_CONFIRMAR =
+  "Todavía no aparece confirmado en el servidor y el guardado sigue en curso. " +
+  "No lo registres de nuevo: espera el aviso o vuelve a comprobar en un momento.";
+const MSG_GUARDADO_SIN_LECTURA =
+  "No pudimos comprobar: revisa tu conexión. El guardado sigue en curso; no " +
+  "lo registres de nuevo.";
+
+function mostrarAvisoIncierto(msg) {
+  avisoInciertoMsg.textContent = msg;
+  avisoIncierto.hidden = false;
+}
+
+// Tiempo agotado con el commit aún en curso: bloquea el registro y espera el
+// desenlace REAL de esa misma escritura. Nunca la repite.
+function vigilarRegistroIncierto(reg, pendiente) {
+  registroIncierto = reg;
+  formError.hidden = true;
+  mostrarAvisoIncierto(MSG_GUARDADO_TARDA);
+  actualizarAccionRegistro();
+  pendiente.then(
+    () => completarRegistro(reg).catch((e) => console.error("Error tras guardar:", e)),
+    (err) => falloRegistroIncierto(reg, err)
+  );
+}
+
+/* «Comprobar ahora»: UNA lectura puntual del primer vale del lote en el
+   servidor (con el reintento de lectura de siempre, sin onSnapshot).
+   - Existe, es de este lote y sin escrituras locales pendientes → se guardó.
+   - Si no, NO prueba que haya fallado: el commit sigue en curso y puede llegar
+     después, así que el registro sigue bloqueado.
+   Jamás reintenta la escritura. */
+async function comprobarGuardadoAhora() {
+  const reg = registroIncierto;
+  if (!reg || reg.comprobando) return;
+  reg.comprobando = true;
+  btnComprobarGuardado.disabled = true;
+  btnComprobarGuardado.innerHTML = '<span class="spinner"></span> Comprobando…';
+  let resultado;
+  try {
+    const snap = await withRetry(() => getDocFromServer(doc(db, COLLECTION, reg.valeIds[0])));
+    // hasPendingWrites: el SDK mezcla la escritura local aún no confirmada;
+    // eso no prueba que el servidor la tenga.
+    const confirmado =
+      snap.exists() &&
+      !(snap.metadata && snap.metadata.hasPendingWrites) &&
+      snap.data().batchId === reg.batchId;
+    resultado = confirmado ? "guardado" : "sin-confirmar";
+  } catch (err) {
+    console.warn("[vales] no se pudo comprobar el guardado:", err);
+    resultado = "sin-lectura";
+  } finally {
+    reg.comprobando = false;
+    btnComprobarGuardado.disabled = false;
+    btnComprobarGuardado.textContent = "Comprobar ahora";
+  }
+  // El commit pudo resolverse mientras se leía: su desenlace ya se mostró.
+  if (reg.terminado) return;
+  if (resultado === "guardado") {
+    await completarRegistro(reg);
+    return;
+  }
+  mostrarAvisoIncierto(
+    resultado === "sin-lectura" ? MSG_GUARDADO_SIN_LECTURA : MSG_GUARDADO_SIN_CONFIRMAR
+  );
+}
+
+btnComprobarGuardado.addEventListener("click", comprobarGuardadoAhora);
 
 // --- Toast de éxito (auto-cierra en 3 s) ------------------------------------
 let toastTimer = null;
