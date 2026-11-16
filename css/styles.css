@@ -692,6 +692,34 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   font-weight: 600;
   text-align: right;
 }
+/* Un renglón por vale: "$200 · Folio 117700". Con muchos vales (hasta 20) la
+   lista se desplaza por dentro para que Total y los botones sigan a la vista. */
+.confirm-folios-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+  max-height: 11.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Folio bajo el nombre en Historial y Admin: cabe a 360 px sin añadir columna. */
+.folio-sub {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.folio-sub--none {
+  opacity: 0.7;
+  font-style: italic;
+}
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1957,4 +1985,190 @@ tr.inv-row--vencido td {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+/* Registro: persona elegida, existencias informativas y acción del carrito. */
+.registro-persona {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.registro-seleccion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.8rem;
+}
+.registro-seleccion .cat-auto {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+}
+.registro-seleccion .badge--empleado,
+.registro-seleccion .badge--familia,
+.registro-seleccion .badge--socio {
+  color: var(--bg);
+}
+#vale-form .denom-btn {
+  padding: 0.7rem 0.8rem;
+}
+.denom-stock {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.registro-stock-hint {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+#vale-form #btn-registrar {
+  width: 100%;
+  min-height: 48px;
+  font-weight: 700;
+}
+.carrito-desglose {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.carrito-desglose .carrito-lista {
+  min-width: 0;
+}
+.carrito-desglose #btn-limpiar {
+  flex-shrink: 0;
+}
+
+/* Sólo la confirmación de Registro; los demás modales conservan su estilo. */
+#confirm-modal .modal-card {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+#confirm-modal .confirm-summary {
+  gap: 0.75rem;
+  line-height: 1.4;
+}
+#confirm-modal .confirm-summary > div {
+  gap: 0.4rem 1rem;
+  padding-bottom: 0.65rem;
+}
+#confirm-modal .confirm-persona,
+#confirm-modal .confirm-folios {
+  flex-direction: column;
+}
+#confirm-modal .confirm-persona dd {
+  text-align: left;
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+#confirm-modal .confirm-folios dd {
+  text-align: left;
+}
+#confirm-modal .confirm-folios-list {
+  gap: 0;
+  max-height: 10rem;
+  white-space: normal;
+}
+#confirm-modal .confirm-folios-list li {
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 1rem;
+}
+#confirm-modal .confirm-total {
+  align-items: baseline;
+}
+#confirm-modal .confirm-total dd {
+  color: var(--accent-text);
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+#confirm-modal .modal-actions > button {
+  flex: 1;
+  min-height: 48px;
+  justify-content: center;
+}
+
+/* Historial móvil: resumen en dos líneas; conserva datos y acciones. */
+.hist-folio { display: none; }
+@media (max-width: 768px) {
+  #view-registro table thead { display: none; }
+  #vales-body { display: block; }
+  #vales-body tr {
+    display: grid;
+    background: var(--surface);
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.35rem 0.7rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  #vales-body td {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    font-size: 0.85rem;
+  }
+  #vales-body .hist-nombre {
+    grid-area: 1 / 1;
+    font-size: 1rem;
+    font-weight: 600;
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
+  }
+  #vales-body .hist-nombre .folio-sub { display: none; }
+  #vales-body .hist-monto {
+    grid-area: 1 / 2;
+    font-size: 1rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  #vales-body .hist-folio { display: block; grid-area: 2 / 1; color: var(--muted); }
+  #vales-body .hist-fecha { grid-area: 2 / 2; text-align: right; color: var(--muted); }
+  #vales-body .col-categoria,
+  #vales-body .col-registrado,
+  #vales-body .col-notas { display: block; grid-column: 1 / -1; }
+  #vales-body .col-registrado:not(:empty)::before { content: 'Registrado por: '; color: var(--muted); }
+  #vales-body .col-notas:not(:empty)::before { content: 'Notas: '; color: var(--muted); }
+  #vales-body td:last-child { grid-column: 1 / -1; width: auto; margin-top: 0.35rem; }
+  #vales-body .acciones { flex-direction: row; }
+  #vales-body .acciones button { min-width: 72px; font-size: 0.85rem; }
+}
+
+.inv-vencimiento { display: block; margin-top: 0.35rem; color: var(--muted); }
+.inv-vence-pronto { display: block; margin-top: 0.35rem; color: #ffd79c; font-weight: 600; }
+@media (max-width: 768px) {
+  #view-inventario .table-wrap { overflow-x: hidden; }
+  #view-inventario table { width: 100%; max-width: 100%; }
+  #view-inventario thead { display: none; }
+  #inv-body { display: block; }
+  #inv-body tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.6rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  #view-inventario #inv-body td {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 0.85rem;
+    min-width: 0;
+  }
+  #view-inventario #inv-body td:nth-child(-n+2) { font-size: 1.1rem; font-weight: 700; }
+  #inv-body td:nth-child(n+3) { grid-column: 1 / -1; }
+  #inv-body td:nth-child(5)::before { content: 'Asignado a: '; color: var(--muted); }
+  #inv-body td:nth-child(6)::before { content: 'Fecha de asignación: '; color: var(--muted); }
+}
+
+@media (max-width: 768px) {
+  #view-inventario #inv-body td.inv-aux-empty { display: none; }
 }

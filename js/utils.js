@@ -30,6 +30,35 @@ export function todayInput() {
 }
 
 // ============================================================================
+//  Folios y búsqueda
+// ============================================================================
+/* Folio de un vale como IDENTIFICADOR: la cadena guardada, sin espacios, o ""
+   si el vale no tiene folio (registros anteriores al inventario). Nunca pasa
+   por Number(): "007765" y "7765" son folios distintos. */
+export function folioDe(v) {
+  const f = v && v.folio != null ? String(v.folio).trim() : "";
+  return f;
+}
+
+/* ¿El vale coincide con lo tecleado en el buscador? Se busca por NOMBRE
+   (contiene, sin distinguir mayúsculas) o por FOLIO.
+
+   El folio se compara como texto, dígito a dígito: sin conversiones numéricas
+   (no se pierden ceros iniciales ni se igualan folios distintos) y aceptando
+   las formas en que la gente lo escribe o lo copia del papel: "117765",
+   "117,765", "117 765" o "folio 117765". Un vale sin folio sólo puede
+   coincidir por nombre. Búsqueda vacía = todo coincide. */
+export function coincideBusqueda(v, consulta) {
+  const texto = String(consulta || "").trim().toLowerCase();
+  if (!texto) return true;
+  if (String((v && v.nombre) || "").toLowerCase().includes(texto)) return true;
+  const digitos = texto.replace(/^folio\s*:?\s*/, "").replace(/[\s,.]/g, "");
+  if (!/^\d+$/.test(digitos)) return false;
+  const folio = folioDe(v);
+  return folio !== "" && folio.includes(digitos);
+}
+
+// ============================================================================
 //  Fechas
 // ============================================================================
 

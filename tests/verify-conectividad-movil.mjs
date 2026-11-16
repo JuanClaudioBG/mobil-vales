@@ -329,40 +329,66 @@ test("el modal de confirmación enseña el folio reservado", () => {
 
   const abrir = extraerFuncion(appCode, "function openConfirm(");
   assert.match(abrir, /openConfirm\(base, items, picks\)/);
-  assert.match(abrir, /mostrarFolios\(picks\)/);
+  assert.match(abrir, /mostrarFolios\(picks, items\)/);
   // Y se le pasan los folios de verdad desde el envío del formulario.
   assert.match(appCode, /openConfirm\(base, items, revision\.picks\)/);
 });
 
-await testAsync("mostrarFolios: formatea, recorta y se oculta sin folios", async () => {
-  const fuente = extraerFuncion(appCode, "function mostrarFolios(");
+await testAsync("confirmación: un renglón por vale, monto junto a su folio", async () => {
+  const fuenteLineas = extraerFuncion(app, "function lineasFolios(");
+  const fuenteMostrar = extraerFuncion(app, "function mostrarFolios(");
   const fila = { hidden: false };
-  const celda = { textContent: "" };
+  const lista = { hijos: [], replaceChildren(...n) { this.hijos = n; } };
   const fabrica = new Function(
-    "cFolios", "cFoliosRow", "formatFolio", "MAX_FOLIOS_VISIBLES",
-    `${fuente}; return mostrarFolios;`
+    "cFolios", "cFoliosRow", "formatFolio", "money", "document",
+    `${fuenteLineas}; ${fuenteMostrar}; return { lineasFolios, mostrarFolios };`
   );
-  const mostrarFolios = fabrica(celda, fila, (f) => Number(f).toLocaleString("es-MX"), 10);
+  // formatFolio REAL de js/inventario.js: el folio es un identificador y se
+  // enseña tal cual está guardado.
+  const comoTexto = new Function(
+    `${extraerFuncion(inv, "export function formatFolio(").replace(/^export\s+/, "")}; return formatFolio;`
+  )();
+  assert.equal(comoTexto("117765"), "117,765", "con coma, como en el PDF de Combusa");
+  assert.equal(comoTexto("007765"), "007,765", "no se pierden los ceros iniciales");
+  assert.equal(comoTexto("1"), "1");
+  const { lineasFolios, mostrarFolios } = fabrica(
+    lista, fila, comoTexto, money,
+    { createElement: () => ({ textContent: "" }) }
+  );
+  const textos = () => lista.hijos.map((li) => li.textContent);
 
   // Sin folios (denominación fuera del inventario): fila oculta.
-  mostrarFolios([null, null]);
+  mostrarFolios([null, null], [4000, 4000]);
   assert.equal(fila.hidden, true);
-  assert.equal(celda.textContent, "");
+  assert.deepEqual(textos(), []);
 
-  // Un folio: se enseña con el formato de Combusa.
-  mostrarFolios([{ folio: "117765" }]);
+  // El ejemplo del requisito: cada monto con SU folio.
+  mostrarFolios(
+    [{ folio: "117700" }, { folio: "117704" }, { folio: "117702" }],
+    [200, 200, 500]
+  );
   assert.equal(fila.hidden, false);
-  assert.equal(celda.textContent, "117,765");
+  assert.deepEqual(textos(), [
+    "$200 · Folio 117,700",
+    "$200 · Folio 117,704",
+    "$500 · Folio 117,702",
+  ]);
 
-  // Varios, incluyendo un hueco sin inventario.
-  mostrarFolios([{ folio: "117765" }, null, { folio: "117766" }]);
-  assert.equal(celda.textContent, "117,765, 117,766");
+  // Ordenado por monto aunque el carrito se armara en otro orden, sin perder
+  // la pareja monto↔folio; los huecos sin inventario no generan renglón.
+  assert.deepEqual(
+    lineasFolios([1000, 200, 4000, 200], [{ folio: "9" }, { folio: "7" }, null, { folio: "8" }]),
+    ["$200 · Folio 7", "$200 · Folio 8", "$1,000 · Folio 9"]
+  );
 
-  // Muchos: se recorta para no desbordar el modal en móvil.
-  mostrarFolios(Array.from({ length: 14 }, (_, i) => ({ folio: String(117765 + i) })));
-  assert.match(celda.textContent, / y 4 más$/);
-  assert.equal(celda.textContent.split(", ").length, 10);
+  // Identificador: ni separador de miles ni pérdida de ceros iniciales.
+  assert.deepEqual(lineasFolios([200], [{ folio: "007765" }]), ["$200 · Folio 007,765"]);
+
+  // Los 20 vales del tope se enseñan TODOS (la lista se desplaza por CSS).
+  const veinte = Array.from({ length: 20 }, (_, k) => ({ folio: String(117765 + k) }));
+  assert.equal(lineasFolios(veinte.map(() => 200), veinte).length, 20);
 });
+
 
 test("el QR de prueba sigue existiendo sólo para montos sin inventario", () => {
   // makeQrCode() no desaparece: $4,000 y futuras denominaciones lo necesitan.

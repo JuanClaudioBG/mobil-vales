@@ -62,15 +62,16 @@
       <section id="view-registro" class="view">
         <!-- Formulario de captura ----------------------------------->
         <form id="vale-form" class="card form-grid">
-          <label>
-            Persona
-            <select id="persona" required>
-              <option value="" disabled selected>Selecciona una persona…</option>
-            </select>
-          </label>
-          <div class="cat-auto-wrap">
-            <span class="field-label">Categoría (automática)</span>
-            <span id="cat-auto" class="cat-auto">—</span>
+          <div class="registro-persona full">
+            <label>
+              Persona
+              <select id="persona" required>
+                <option value="" disabled selected>Selecciona una persona…</option>
+              </select>
+            </label>
+            <div id="persona-resumen" class="registro-seleccion" aria-live="polite" hidden>
+              <span id="cat-auto" class="cat-auto">—</span>
+            </div>
           </div>
           <label class="autocomplete">
             Registrado por
@@ -92,14 +93,17 @@
           <div class="full denom-field">
             <span class="field-label">Montos (toca para agregar cada vale)</span>
             <div id="denoms" class="denoms"></div>
+            <p class="registro-stock-hint">Vigencia y disponibilidad se verifican al registrar.</p>
             <div id="carrito-resumen" class="carrito-resumen" hidden>
-              <ul id="carrito-lista" class="carrito-lista"></ul>
+              <div class="carrito-desglose">
+                <ul id="carrito-lista" class="carrito-lista"></ul>
+                <button type="button" id="btn-limpiar" class="btn-secondary">Limpiar</button>
+              </div>
               <div class="carrito-footer">
                 <span class="carrito-total-wrap">
                   Total: <strong id="carrito-total">$0</strong>
                   <span id="carrito-count" class="carrito-count"></span>
                 </span>
-                <button type="button" id="btn-limpiar" class="btn-secondary">Limpiar</button>
               </div>
             </div>
           </div>
@@ -109,7 +113,7 @@
           </label>
           <p id="form-error" class="error full" hidden></p>
           <div class="full">
-            <button type="submit">Registrar vales</button>
+            <button type="submit" id="btn-registrar">Registrar vales</button>
           </div>
         </form>
 
@@ -121,7 +125,7 @@
           </div>
           <div class="filtros">
             <label>Mes <input type="month" id="filtro-mes" /></label>
-            <label>Nombre <input type="text" id="filtro-nombre" placeholder="Buscar…" /></label>
+            <label>Buscar <input type="text" enterkeyhint="search" id="filtro-nombre" placeholder="Nombre o folio…" autocomplete="off" /></label>
             <label>Categoría <select id="filtro-categoria"></select></label>
           </div>
           <div class="table-wrap">
@@ -297,16 +301,17 @@
           <p id="inv-resumen" class="inv-resumen" hidden></p>
           <p id="inv-error" class="error" hidden></p>
 
-          <div class="filtros">
-            <label>Importación <select id="inv-filtro-lote"></select></label>
-          </div>
-          <p id="inv-alcance" class="inv-ultima" aria-live="polite"></p>
           <div id="inv-stock" class="stat-grid inv-stock"></div>
           <div class="inv-totales">
             <span>Total disponible: <strong id="inv-total">$0</strong></span>
             <span id="inv-ultima" class="inv-ultima"></span>
           </div>
 
+          <div class="filtros">
+            <label>Buscar folio <input type="search" id="inv-buscar" placeholder="Folio con o sin coma…" autocomplete="off" /></label>
+            <label>Importación <select id="inv-filtro-lote"></select></label>
+          </div>
+          <p id="inv-alcance" class="inv-ultima" aria-live="polite"></p>
           <div class="filtros">
             <label>Estado <select id="inv-filtro-status"></select></label>
             <label>Monto <select id="inv-filtro-monto"></select></label>
@@ -317,7 +322,7 @@
                 <tr>
                   <th>Folio</th>
                   <th class="num">Monto</th>
-                  <th>Status</th>
+                  <th>Estado / Vencimiento</th>
                   <th>Payload QR</th>
                   <th>Asignado a</th>
                   <th>Fecha asignación</th>
@@ -338,17 +343,21 @@
       <div id="toast" class="toast" hidden></div>
 
       <!-- Modal de confirmación ---------------------------------------->
-      <div id="confirm-modal" class="modal" hidden>
+      <div id="confirm-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
         <div class="modal-card">
-          <h2>¿Confirmar registro?</h2>
+          <h2 id="confirm-title">¿Confirmar registro?</h2>
           <dl class="confirm-summary">
-            <div><dt>Persona</dt><dd id="c-persona"></dd></div>
-            <div><dt>Categoría</dt><dd id="c-categoria"></dd></div>
+            <div class="confirm-persona"><dt>Persona</dt><dd id="c-persona"></dd></div>
+            <div class="confirm-categoria"><dt>Categoría</dt><dd id="c-categoria"></dd></div>
             <div><dt>Vales</dt><dd id="c-vales"></dd></div>
-            <!-- Folios reservados del inventario de Combusa. Se oculta si
+            <!-- Folios reservados del inventario de Combusa: un renglón por
+                 vale, con su monto ("$200 · Folio 117700"). Se oculta si
                  ningún vale del registro sale del inventario. -->
-            <div id="c-folios-row" hidden><dt>Folios</dt><dd id="c-folios"></dd></div>
-            <div><dt>Total</dt><dd id="c-total"></dd></div>
+            <div id="c-folios-row" class="confirm-folios" hidden>
+              <dt>Folios</dt>
+              <dd><ul id="c-folios" class="confirm-folios-list"></ul></dd>
+            </div>
+            <div class="confirm-total"><dt>Total</dt><dd id="c-total"></dd></div>
             <div><dt>Fecha</dt><dd id="c-fecha"></dd></div>
             <div><dt>Registrado por</dt><dd id="c-registrado"></dd></div>
           </dl>

@@ -31,6 +31,8 @@ import {
   valeDate,
   withRetry,
   withTimeout,
+  folioDe,
+  coincideBusqueda,
 } from "./utils.js";
 import {
   EMPTY_FILTERS,
@@ -54,6 +56,7 @@ import {
   montoRequiereInventario,
   inventarioIlegible,
   stockDisponible,
+  stockConsultado,
   reservarFolios,
   inventarioDocRef,
   camposAsignacion,
@@ -95,6 +98,7 @@ const pinError = $("#pin-error");
 
 const appScreen = $("#app-screen");
 const valeForm = $("#vale-form");
+const btnRegistrar = $("#btn-registrar");
 const formError = $("#form-error");
 const tbody = $("#vales-body");
 const emptyState = $("#empty-state");
@@ -490,6 +494,7 @@ function unlock() {
       db,
       requestAdminPin,
       showToast,
+      onStockChange: renderExistenciasRegistro,
       // Quién importa el PDF: el mismo nombre que usa "Registrado por".
       getUsuario: () => registradoPorInput.value.trim() || "Admin",
     });
@@ -548,6 +553,7 @@ for (const depto of DEPARTAMENTOS) {
 personaSelect.addEventListener("change", updateCategoriaAuto);
 function updateCategoriaAuto() {
   const p = personaPorNombre.get(personaSelect.value);
+  $("#persona-resumen").hidden = !p;
   if (p) {
     catAuto.textContent = p.categoria;
     catAuto.className = "cat-auto badge badge--" + catSlug(p.categoria);
@@ -596,7 +602,10 @@ for (const monto of MONTOS) {
   btn.dataset.monto = String(monto);
   btn.innerHTML =
     `<span class="denom-amount">$${monto.toLocaleString("es-MX")}</span>` +
+    `<span class="denom-stock" id="stock-${monto}">Sin consultar</span>` +
     `<span class="denom-badge"></span>`;
+  btn.setAttribute("aria-label", `Agregar vale de ${money(monto)}`);
+  btn.setAttribute("aria-describedby", `stock-${monto}`);
   btn.addEventListener("click", () => addToCart(monto));
 
   const minus = document.createElement("button");
@@ -614,6 +623,25 @@ for (const monto of MONTOS) {
 }
 
 if (btnLimpiar) btnLimpiar.addEventListener("click", clearCart);
+
+// Sólo presenta los COUNT que Inventario ya carga; no añade consultas.
+function renderExistenciasRegistro() {
+  for (const btn of denomButtons) {
+    const cantidad = stockConsultado(btn.dataset.monto);
+    btn.querySelector(".denom-stock").textContent = cantidad === null
+      ? "Sin consultar"
+      : cantidad === 0
+        ? "Agotado"
+        : `${cantidad} ${cantidad === 1 ? "disponible" : "disponibles"}`;
+  }
+}
+
+function actualizarAccionRegistro() {
+  const items = cartItems();
+  btnRegistrar.textContent = items.length
+    ? `Registrar ${items.length} ${items.length === 1 ? "vale" : "vales"} · ${money(items.reduce((total, monto) => total + monto, 0))}`
+    : "Registrar vales";
+}
 
 function cartCount() {
   let n = 0;
@@ -692,6 +720,7 @@ function renderCart() {
   carritoCountEl.textContent =
     count > 0 ? `(${count}/${MAX_VALES} ${count === 1 ? "vale" : "vales"})` : "";
   carritoResumen.hidden = carrito.size === 0;
+  actualizarAccionRegistro();
 }
 
 // --- Cargar los vales una sola vez (lectura puntual) ------------------------
@@ -888,8 +917,9 @@ function validarBase(d) {
 function openConfirm(base, items, picks) {
   cPersona.textContent = base.nombre;
   cCategoria.textContent = base.categoria;
-  cVales.textContent = resumenVales(items);
-  mostrarFolios(picks);
+  const n = items.length;
+  cVales.textContent = `${n} ${n === 1 ? "vale" : "vales"} · ${resumenVales(items)}`;
+  mostrarFolios(picks, items);
   cTotal.textContent = money(sum(items));
   cFecha.textContent = parseDateInput(base.fechaValeStr).toLocaleDateString("es-MX", {
     day: "2-digit",
@@ -904,22 +934,31 @@ function closeConfirm() {
   confirmModal.hidden = true;
 }
 
-// Folios reservados, en la misma confirmación. Si ningún vale sale del
-// inventario (denominación fuera de INVENTARIO_MONTOS) la fila se oculta en
-// vez de enseñar un hueco vacío.
-const MAX_FOLIOS_VISIBLES = 10;
+// Folios reservados, en la misma confirmación: UN RENGLÓN POR VALE con su
+// monto ("$200 · Folio 117700"), para poder cotejar cada vale de papel con lo
+// que se va a entregar. Antes eran dos filas sueltas ("$200 ×2, $500 ×1" y
+// "117,700, 117,704, 117,702") y no se sabía qué folio era de qué monto.
+// Ordenados por monto; dentro de cada monto se respeta el orden de la reserva.
+// Los vales sin folio de inventario (denominación fuera de INVENTARIO_MONTOS)
+// no generan renglón; si ninguno lo tiene, la fila entera se oculta.
+function lineasFolios(items, picks) {
+  return items
+    .map((monto, i) => ({ monto: Number(monto), pick: picks && picks[i] }))
+    .filter((x) => x.pick)
+    .sort((a, b) => a.monto - b.monto)
+    .map((x) => `${money(x.monto)} · Folio ${formatFolio(x.pick.folio)}`);
+}
 
-function mostrarFolios(picks) {
-  const folios = (picks || []).filter(Boolean).map((p) => formatFolio(p.folio));
-  if (folios.length === 0) {
-    cFoliosRow.hidden = true;
-    cFolios.textContent = "";
-    return;
-  }
-  const visibles = folios.slice(0, MAX_FOLIOS_VISIBLES);
-  const resto = folios.length - visibles.length;
-  cFolios.textContent = visibles.join(", ") + (resto > 0 ? ` y ${resto} más` : "");
-  cFoliosRow.hidden = false;
+function mostrarFolios(picks, items) {
+  const lineas = lineasFolios(items || [], picks || []);
+  cFolios.replaceChildren(
+    ...lineas.map((texto) => {
+      const li = document.createElement("li");
+      li.textContent = texto;
+      return li;
+    })
+  );
+  cFoliosRow.hidden = lineas.length === 0;
 }
 
 // Agrupa items en "$200 ×2, $500 ×1"
@@ -1726,15 +1765,25 @@ filtroNombre.addEventListener("input", renderHistorial);
 filtroMes.value = currentMonthKey();
 dashMes.value = currentMonthKey();
 
+/* Folio bajo el nombre, en Historial y Admin. Se muestra tal cual está
+   guardado (es un identificador). Los vales anteriores al inventario no tienen
+   folio: se dice expresamente en vez de dejar un hueco. */
+function folioHtml(v) {
+  const folio = folioDe(v);
+  return folio
+    ? `<span class="folio-sub">Folio ${escapeHtml(formatFolio(folio))}</span>`
+    : '<span class="folio-sub folio-sub--none">Sin folio</span>';
+}
+
 function renderHistorial() {
   const cat = filtroCategoria.value;
   const mes = filtroMes.value; // "YYYY-MM" o ""
-  const nombreQ = filtroNombre.value.trim().toLowerCase();
+  const busqueda = filtroNombre.value; // nombre o folio
 
   const vales = activos(allVales).filter((v) => {
     if (cat && v.categoria !== cat) return false;
     if (mes && monthKey(valeDate(v)) !== mes) return false;
-    if (nombreQ && !(v.nombre || "").toLowerCase().includes(nombreQ)) return false;
+    if (!coincideBusqueda(v, busqueda)) return false;
     return true;
   });
 
@@ -1746,12 +1795,13 @@ function renderHistorial() {
     const tr = document.createElement("tr");
     tr.className = "row-" + catSlug(v.categoria);
     tr.innerHTML = `
-      <td>${escapeHtml(v.nombre)}</td>
+      <td class="hist-nombre">${escapeHtml(v.nombre)}${folioHtml(v)}</td>
+      <td class="hist-folio">${folioDe(v) ? `Folio ${escapeHtml(formatFolio(folioDe(v)))}` : "Sin folio"}</td>
       <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>
-      <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
-      <td>${formatFechaVale(v)}</td>
+      <td class="num hist-monto">$${Number(v.monto).toLocaleString("es-MX")}</td>
+      <td class="hist-fecha">${formatFechaVale(v)}</td>
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
     `;

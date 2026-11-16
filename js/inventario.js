@@ -31,7 +31,7 @@ import {
   INVENTARIO_MONTOS,
   INVENTARIO_STATUS,
 } from "./config.js";
-import { escapeHtml, money, todayInput, withRetry } from "./utils.js";
+import { escapeHtml, money, todayInput, withRetry, coincideBusqueda } from "./utils.js";
 import { extractVouchersFromPdf } from "./pdf-vales.js";
 
 // Vales por lote de escritura. 50 documentos ≈ 250KB por petición: muy por
@@ -106,6 +106,7 @@ export function initInventario(options) {
     alcance: $("#inv-alcance"),
     filtroStatus: $("#inv-filtro-status"),
     filtroMonto: $("#inv-filtro-monto"),
+    buscar: $("#inv-buscar"),
     body: $("#inv-body"),
     empty: $("#inv-empty"),
     error: $("#inv-error"),
@@ -126,6 +127,7 @@ export function initInventario(options) {
   });
   el.filtroStatus.addEventListener("change", renderTabla);
   el.filtroMonto.addEventListener("change", renderTabla);
+  el.buscar.addEventListener("input", renderTabla);
   el.body.addEventListener("click", onTableClick);
 
   el.importBtn.addEventListener("click", onImportClick);
@@ -206,6 +208,7 @@ async function cargarStock() {
     inventarioUsado = false;
     poolError = err; // → el registro se BLOQUEA, no cae al QR de prueba
   }
+  deps.onStockChange?.();
   return stock;
 }
 
@@ -283,6 +286,11 @@ export function inventarioEnUso() {
    verdad es reservarFolios(), que sí descarta los vencidos. */
 export function stockDisponible(monto) {
   return stock.get(Number(monto)) || 0;
+}
+
+// Para la interfaz: un conteo desconocido no equivale a cero existencias.
+export function stockConsultado(monto) {
+  return stock.has(Number(monto)) ? stock.get(Number(monto)) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -753,7 +761,7 @@ function renderStock() {
     card.innerHTML =
       `<span class="stat-label">${money(monto)}</span>` +
       `<strong>${libres}</strong>` +
-      `<span class="inv-card-sub">disponibles</span>`;
+      `<span class="inv-card-sub">${libres === 1 ? "disponible" : "disponibles"}</span>`;
     el.stock.appendChild(card);
   }
 
@@ -778,12 +786,22 @@ function renderStock() {
     : "";
 }
 
+// Aviso de presentación: mismo día local y comparación ISO que esVencido.
+function vencePronto(v) {
+  if (statusEfectivo(v) !== "disponible" || !v.vencimiento) return false;
+  const limite = new Date(todayInput() + "T12:00:00");
+  limite.setDate(limite.getDate() + 15);
+  const fin = `${limite.getFullYear()}-${String(limite.getMonth() + 1).padStart(2, "0")}-${String(limite.getDate()).padStart(2, "0")}`;
+  return v.vencimiento >= todayInput() && v.vencimiento <= fin;
+}
+
 function renderTabla() {
   const fStatus = el.filtroStatus.value;
   const fMonto = el.filtroMonto.value;
 
   const lote = valesDelLote();
   const filas = lote.filter((v) => {
+    if (!coincideBusqueda({ folio: v.folio }, el.buscar.value)) return false;
     if (fStatus && statusEfectivo(v) !== fStatus) return false;
     if (fMonto && Number(v.monto) !== Number(fMonto)) return false;
     return true;
@@ -817,11 +835,11 @@ function renderTabla() {
       `<td class="num">${money(v.monto)}</td>` +
       `<td><span class="badge badge--${status}">${escapeHtml(
         STATUS_LABELS[status] || capitalize(status)
-      )}</span></td>` +
-      `<td><code class="inv-decoded-payload">${escapeHtml(payload)}</code></td>` +
-      `<td>${escapeHtml(v.asignadoA || "—")}</td>` +
-      `<td>${asignadoEn}</td>` +
-      `<td>${accion}</td>`;
+      )}</span><span class="inv-vencimiento">${v.vencimiento ? `Vence: ${escapeHtml(v.vencimiento)}` : "Sin fecha de vencimiento"}</span>${vencePronto(v) ? '<span class="inv-vence-pronto">Vence en los próximos 15 días</span>' : ""}</td>` +
+      `<td class="${payload === "—" ? "inv-aux-empty" : ""}"><code class="inv-decoded-payload">${escapeHtml(payload)}</code></td>` +
+      `<td class="${String(v.asignadoA || "").trim() ? "" : "inv-aux-empty"}">${escapeHtml(v.asignadoA || "—")}</td>` +
+      `<td class="${asignadoEn === "—" ? "inv-aux-empty" : ""}">${asignadoEn}</td>` +
+      `<td class="${accion === "—" ? "inv-aux-empty" : ""}">${accion}</td>`;
     el.body.appendChild(tr);
   }
 
@@ -866,8 +884,14 @@ async function onTableClick(event) {
   }
 }
 
-// "117765" → "117,765" (como lo imprime Combusa)
+/* El folio es un IDENTIFICADOR, no una cantidad: se muestra tal cual está
+   guardado. Antes pasaba por Number().toLocaleString() ("117765" → "117,765"),
+   que además de la coma se comía los ceros iniciales ("007765" → "7,765") y
+   hacía que lo que se ve no fuera lo que se busca. */
 export function formatFolio(folio) {
-  const n = Number(folio);
-  return Number.isFinite(n) ? n.toLocaleString("es-MX") : String(folio);
+  // Con coma de miles, como lo imprime Combusa ("117765" → "117,765"), pero
+  // agrupando el TEXTO: sin pasar por Number() no se pierden ceros iniciales
+  // ("007765" → "007,765"). La búsqueda acepta el folio con o sin coma.
+  const texto = String(folio ?? "").trim();
+  return /^\d+$/.test(texto) ? texto.replace(/\B(?=(\d{3})+$)/g, ",") : texto;
 }
