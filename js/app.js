@@ -59,6 +59,7 @@ import {
   renderInventarioAdmin,
   montoRequiereInventario,
   inventarioIlegible,
+  inventarioEnUso,
   stockDisponible,
   stockConsultado,
   reservarFolios,
@@ -680,6 +681,30 @@ for (const monto of MONTOS) {
 
 if (btnLimpiar) btnLimpiar.addEventListener("click", clearCart);
 
+/* ¿El servidor ya respondió y el COUNT total del inventario es 0?
+   Sale de lo que inventario.js ya expone, sin consultas nuevas: se leyó bien
+   (no ilegible), ya hay conteos (stockConsultado deja de dar null) y no hay
+   ningún vale importado (inventarioEnUso() es «COUNT total > 0»). Antes de la
+   primera respuesta, o si la lectura falló, NO se da por vacío. */
+const MSG_INVENTARIO_VACIO =
+  "No hay vales en inventario. Importa el PDF en la pestaña Inventario.";
+function inventarioVacio() {
+  return (
+    !inventarioIlegible() &&
+    !inventarioEnUso() &&
+    INVENTARIO_MONTOS.some((m) => stockConsultado(m) !== null)
+  );
+}
+
+// Aviso fijo de «inventario vacío», encima del error del formulario. Se crea
+// aquí para no depender de index.html.
+const avisoInventarioVacio = document.createElement("p");
+avisoInventarioVacio.id = "aviso-inventario-vacio";
+avisoInventarioVacio.className = "error full";
+avisoInventarioVacio.textContent = MSG_INVENTARIO_VACIO;
+avisoInventarioVacio.hidden = true;
+formError.before(avisoInventarioVacio);
+
 // Sólo presenta los COUNT que Inventario ya carga; no añade consultas.
 function renderExistenciasRegistro() {
   for (const btn of denomButtons) {
@@ -690,6 +715,11 @@ function renderExistenciasRegistro() {
         ? "Agotado"
         : `${cantidad} ${cantidad === 1 ? "disponible" : "disponibles"}`;
   }
+  // Con el inventario vacío se avisa desde el principio y «Registrar» queda
+  // bloqueado; al importar un PDF (o pulsar «Actualizar») se vuelve a contar y
+  // esto se deshace solo.
+  avisoInventarioVacio.hidden = !inventarioVacio();
+  actualizarAccionRegistro();
 }
 
 function actualizarAccionRegistro() {
@@ -697,6 +727,11 @@ function actualizarAccionRegistro() {
   if (registroIncierto) {
     btnRegistrar.disabled = true;
     btnRegistrar.innerHTML = '<span class="spinner"></span> Verificando guardado anterior…';
+    return;
+  }
+  if (inventarioVacio()) {
+    btnRegistrar.disabled = true;
+    btnRegistrar.textContent = "Registrar vales";
     return;
   }
   btnRegistrar.disabled = false;
@@ -967,6 +1002,11 @@ async function revisarInventario(items) {
   const deInventario = items.filter((m) => INVENTARIO_MONTOS.includes(Number(m)));
   if (inventarioIlegible() && deInventario.length > 0) {
     return { problema: sinConsulta };
+  }
+  // Inventario vacío (COUNT total 0, recién contado): no hay folio que
+  // entregar, así que no se llega a abrir la confirmación.
+  if (inventarioVacio()) {
+    return { problema: MSG_INVENTARIO_VACIO };
   }
 
   // Cuántos se piden de cada denominación que sale del inventario.
@@ -1394,15 +1434,20 @@ async function comprobarGuardadoAhora() {
 btnComprobarGuardado.addEventListener("click", comprobarGuardadoAhora);
 
 // --- Toast de éxito (auto-cierra en 3 s) ------------------------------------
+// Son DOS temporizadores: el de los 3 s y el de los 300 ms que oculta el
+// elemento al acabar el desvanecido. Al mostrar un toast nuevo se cancelan los
+// dos del anterior; si no, el ocultado pendiente escondía el nuevo al instante.
 let toastTimer = null;
+let toastHideTimer = null;
 function showToast(msg) {
+  clearTimeout(toastTimer);
+  clearTimeout(toastHideTimer);
   toastEl.textContent = msg;
   toastEl.hidden = false;
   toastEl.classList.add("show");
-  clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     toastEl.classList.remove("show");
-    setTimeout(() => (toastEl.hidden = true), 300);
+    toastHideTimer = setTimeout(() => (toastEl.hidden = true), 300);
   }, 3000);
 }
 
@@ -1858,7 +1903,7 @@ function celdaAcciones(v, { conAnular }) {
     btn.className = "btn-anular";
     btn.title = "Anular";
     btn.textContent = "Anular";
-    btn.addEventListener("click", () => anularVale(v));
+    btn.addEventListener("click", () => anularUnaVez(v));
     wrap.appendChild(btn);
   }
 
@@ -1870,6 +1915,12 @@ function celdaAcciones(v, { conAnular }) {
 // Devuelve una promesa que resuelve true (PIN correcto) o false (cancelado).
 let adminPinResolver = null;
 function requestAdminPin(actionLabel) {
+  // Si ya había un PIN pendiente, esa petición se da por CANCELADA antes de
+  // abrir la nueva: su promesa resuelve false en vez de quedarse colgada para
+  // siempre (el modal es uno solo y sólo puede responder a la última).
+  const anterior = adminPinResolver;
+  adminPinResolver = null;
+  if (anterior) anterior(false);
   return new Promise((resolve) => {
     adminPinResolver = resolve;
     adminPinAction.textContent = actionLabel || "";
@@ -2084,6 +2135,22 @@ async function anularVale(vale) {
   } catch (err) {
     console.error("Error al anular:", err);
     alert(mensajeError(err, "anular el vale"));
+  }
+}
+
+/* Candado del botón «Anular»: mientras anularVale() corre para un vale (desde
+   que pide el PIN hasta que termina, bien o mal), otro toque sobre ESE vale se
+   ignora. Sin él, un doble toque pedía el PIN dos veces y podía lanzar dos
+   lotes. Sólo envuelve la llamada: anularVale() no cambia. Se libera siempre
+   en finally, también si anularVale lanza. */
+const anulacionesEnCurso = new Set();
+async function anularUnaVez(vale) {
+  if (anulacionesEnCurso.has(vale.id)) return;
+  anulacionesEnCurso.add(vale.id);
+  try {
+    await anularVale(vale);
+  } finally {
+    anulacionesEnCurso.delete(vale.id);
   }
 }
 

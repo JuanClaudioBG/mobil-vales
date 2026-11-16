@@ -90,6 +90,7 @@ function cliente({ commitImpl, leerVale = async () => ({ exists: () => false }) 
     uuid: () => `lote-${reg.commits + 1}`,
     btnConfirmar: btn(), btnCancelar: btn(), btnRegistrar: btn(), btnComprobarGuardado: btn(),
     formError: { hidden: true, textContent: "" },
+    inventarioVacio: () => false, // actualizarAccionRegistro() lo consulta; aquí hay inventario
     avisoIncierto: { hidden: true }, avisoInciertoMsg: { textContent: "" },
     db: {}, valesRef: { col: "vales" }, COLLECTION: "vales",
     doc: (base, col, id) => (col === undefined ? { id: `AUTO${++nextId}` } : { col, id }),

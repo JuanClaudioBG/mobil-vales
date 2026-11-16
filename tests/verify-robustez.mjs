@@ -141,6 +141,7 @@ class Nodo {
   focus() {}
   reset() {}
   remove() {}
+  before() {} // js/app.js inserta el aviso de «inventario vacío» antes de #form-error
   scrollIntoView() {}
   click() { return this.disparar("click"); }
 }
@@ -295,6 +296,7 @@ function cargarApp({ almacenamiento = almacenamientoNormal(), versiones = ["prue
     renderInventarioAdmin: async () => {},
     montoRequiereInventario: () => true,
     inventarioIlegible: () => false,
+    inventarioEnUso: () => true,
     stockDisponible: () => 0,
     stockConsultado: () => null,
     reservarFolios: async () => ({ picks: [], faltantes: {}, error: null }),

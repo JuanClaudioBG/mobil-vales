@@ -206,6 +206,10 @@ function construirRevisar(escenario) {
     "reservarFolios",
     "INVENTARIO_MONTOS",
     "money",
+    // revisarInventario() también pregunta ahora si el inventario está vacío
+    // (js/app.js: inventarioVacio). Estos escenarios siempre tienen inventario.
+    "inventarioVacio",
+    "MSG_INVENTARIO_VACIO",
     `${fuente}; return revisarInventario;`
   );
   const revisar = fabrica(
@@ -235,7 +239,9 @@ function construirRevisar(escenario) {
       };
     },
     INVENTARIO_MONTOS,
-    money
+    money,
+    () => false,
+    "inventario vacío (no aplica en estos escenarios)"
   );
   return { revisar, llamadas };
 }
