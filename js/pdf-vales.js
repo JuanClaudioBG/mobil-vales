@@ -25,6 +25,9 @@
 const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 const PDFJS_WORKER_SRC =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+// jsQR valida los QR extraídos del PDF antes de guardarlos. Sólo hace falta al
+// importar, así que no se carga con la app sino la primera vez que se usa.
+const JSQR_SRC = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
 
 // Ancho (px) al que se renderiza la imagen incrustada del vale antes de
 // recortar el blanco. El QR ocupa ~35% de esa imagen, así que 1100px dejan un
@@ -96,6 +99,33 @@ export function loadPdfJs() {
     document.head.appendChild(script);
   });
   return pdfjsPromise;
+}
+
+// --- Carga de jsQR desde la CDN (bajo demanda, una sola vez) -----------------
+// La promesa se memoriza mientras la carga va bien. Si FALLA no se memoriza:
+// se quita el <script> roto y el siguiente intento vuelve a descargarlo.
+let jsqrPromise = null;
+export function loadJsQr() {
+  if (typeof window.jsQR === "function") return Promise.resolve(window.jsQR);
+  if (jsqrPromise) return jsqrPromise;
+  const promesa = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    const fallo = () => {
+      script.remove();
+      reject(
+        new Error("No se pudo cargar jsQR desde la CDN. Revisa la conexión e inténtalo de nuevo.")
+      );
+    };
+    script.src = JSQR_SRC;
+    script.onload = () => (typeof window.jsQR === "function" ? resolve(window.jsQR) : fallo());
+    script.onerror = fallo;
+    document.head.appendChild(script);
+  });
+  jsqrPromise = promesa;
+  promesa.catch(() => {
+    if (jsqrPromise === promesa) jsqrPromise = null;
+  });
+  return promesa;
 }
 
 // ===========================================================================
@@ -601,9 +631,7 @@ async function extractQrBase64(page, rect) {
 // validación comprueba la misma imagen que luego verá/compartirá la app, no un
 // lienzo intermedio que podría tener distinto recorte o escala.
 async function decodeQrBase64(base64) {
-  if (typeof window.jsQR !== "function") {
-    throw new Error("No se pudo cargar jsQR desde la CDN. Revisa la conexión e inténtalo de nuevo.");
-  }
+  const jsQR = await loadJsQr(); // si no carga, lanza el aviso de la CDN
 
   const image = new Image();
   image.decoding = "sync";
@@ -622,7 +650,7 @@ async function decodeQrBase64(base64) {
   ctx.clearRect(0, 0, decodeCanvas.width, decodeCanvas.height);
   ctx.drawImage(image, 0, 0);
   const pixels = ctx.getImageData(0, 0, decodeCanvas.width, decodeCanvas.height);
-  const decoded = window.jsQR(pixels.data, pixels.width, pixels.height, {
+  const decoded = jsQR(pixels.data, pixels.width, pixels.height, {
     inversionAttempts: "attemptBoth",
   });
   return decoded && typeof decoded.data === "string" && decoded.data

@@ -432,8 +432,8 @@
       </div>
     </main>
 
-    <!-- jsQR valida los QR extraídos del PDF antes de guardarlos. -->
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <!-- jsQR (valida los QR del PDF) ya no va aquí: js/pdf-vales.js lo carga
+         bajo demanda al importar un PDF. -->
     <!-- qrcode.js (global window.QRCode); script clásico → se ejecuta antes que el módulo -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>

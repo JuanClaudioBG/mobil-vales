@@ -1468,16 +1468,17 @@ async function renderQrVale() {
   // pide la gasolinera); si no, el código generado por la app, más discreto.
   qrCodeText.textContent = v.folio ? `Folio: ${formatFolio(v.folio)}` : v.qrCode;
   qrCodeText.classList.toggle("qr-code--folio", !!v.folio);
-  qrVence.hidden = !v.vencimiento;
-  if (v.vencimiento) {
-    qrVence.textContent =
-      "Vence: " +
+  // El mismo texto «Vence: …» se usa en el modal y al compartir.
+  const venceTxt = v.vencimiento
+    ? "Vence: " +
       parseDateInput(v.vencimiento).toLocaleDateString("es-MX", {
         day: "2-digit",
         month: "long",
         year: "numeric",
-      });
-  }
+      })
+    : "";
+  qrVence.hidden = !v.vencimiento;
+  if (v.vencimiento) qrVence.textContent = venceTxt;
 
   // Vale ANULADO (sólo se llega aquí reabriéndolo desde el historial): el
   // modal queda en modo CONSULTA. Sin descargar ni compartir, porque el folio
@@ -1519,7 +1520,7 @@ async function renderQrVale() {
         `Monto: ${money(v.monto)}\n` +
         `Fecha: ${fechaTxt}\n` +
         idTxt +
-        (v.vencimiento ? `\nVence: ${v.vencimiento}` : ""),
+        (venceTxt ? `\n${venceTxt}` : ""),
     };
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
@@ -2178,6 +2179,14 @@ function folioHtml(v) {
     : '<span class="folio-sub folio-sub--none">Sin folio</span>';
 }
 
+/* Monto de una fila (Historial y Admin). Un monto que no es un número válido
+   (falta, texto, NaN) se muestra como «—» en vez de «$NaN». Sólo es
+   presentación: las sumas y el dashboard no pasan por aquí. */
+function montoCelda(monto) {
+  const n = typeof monto === "string" && monto.trim() !== "" ? Number(monto) : monto;
+  return typeof n === "number" && Number.isFinite(n) ? "$" + n.toLocaleString("es-MX") : "—";
+}
+
 /* Etiqueta de un vale anulado en el Historial, con la fecha de anulación si
    quedó guardada (los anulados antiguos pueden no tener anuladoEn). */
 function anuladoHtml(v) {
@@ -2224,7 +2233,7 @@ function renderHistorial() {
       <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>
-      <td class="num hist-monto">$${Number(v.monto).toLocaleString("es-MX")}</td>
+      <td class="num hist-monto">${montoCelda(v.monto)}</td>
       <td class="hist-fecha">${formatFechaVale(v)}</td>
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
@@ -2835,7 +2844,7 @@ function renderAdmin() {
       <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
     )}</span></td>
-      <td class="num">$${Number(v.monto).toLocaleString("es-MX")}</td>
+      <td class="num">${montoCelda(v.monto)}</td>
       <td>${formatFechaVale(v)}</td>
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="col-estado">${anulado ? '<span class="estado-anulado">Anulado</span>' : '<span class="estado-activo">Activo</span>'}</td>
@@ -2872,6 +2881,17 @@ function valesParaExcel() {
   }));
 }
 
+/* Mensaje del fallo al exportar, con el mismo criterio que la importación del
+   PDF: un error SIN código es de la app o del generador (p. ej. no se pudo
+   descargar ExcelJS) y su texto ya está pensado para leerse; uno con código es
+   de Firestore/red y se traduce con mensajeError(). */
+function mensajeExcel(err) {
+  if (err && !err.code && typeof err.message === "string" && err.message) {
+    return err.message;
+  }
+  return mensajeError(err, "exportar el Excel");
+}
+
 async function exportExcel() {
   const etiqueta = btnExcel.textContent;
   btnExcel.disabled = true;
@@ -2887,7 +2907,7 @@ async function exportExcel() {
     showToast("✅ Excel generado");
   } catch (err) {
     console.error("Error al exportar a Excel:", err);
-    showToast("⚠️ No se pudo generar el Excel: " + err.message);
+    showToast("⚠️ No se pudo generar el Excel: " + mensajeExcel(err));
   } finally {
     btnExcel.disabled = false;
     btnExcel.textContent = etiqueta;
