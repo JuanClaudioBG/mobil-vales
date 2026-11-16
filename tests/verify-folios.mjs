@@ -93,7 +93,8 @@ const inv = fs.readFileSync("js/inventario.js", "utf8");
 const html = fs.readFileSync("index.html", "utf8");
 
 ok("el folio se pinta en las filas de Historial y de Admin", () => {
-  const filas = app.match(/<td(?: class="hist-nombre")?>\$\{escapeHtml\(v\.nombre\)\}\$\{folioHtml\(v\)\}<\/td>/g) || [];
+  // En Historial puede seguirle la etiqueta «Anulado» (con «Mostrar anulados»).
+  const filas = app.match(/<td(?: class="hist-nombre")?>\$\{escapeHtml\(v\.nombre\)\}\$\{folioHtml\(v\)\}(?:\$\{anulado \? anuladoHtml\(v\) : ""\})?<\/td>/g) || [];
   assert.equal(filas.length, 2, "una vez en renderHistorial y otra en renderAdmin");
 });
 ok("folioHtml: escapa, no convierte a número y cubre los vales sin folio", () => {

@@ -31,7 +31,7 @@ import {
   INVENTARIO_MONTOS,
   INVENTARIO_STATUS,
 } from "./config.js";
-import { escapeHtml, money, todayInput, withRetry, coincideBusqueda } from "./utils.js";
+import { escapeHtml, money, todayInput, withRetry, coincideBusqueda, mensajeError } from "./utils.js";
 import { extractVouchersFromPdf } from "./pdf-vales.js";
 
 // Vales por lote de escritura. 50 documentos ≈ 250KB por petición: muy por
@@ -549,6 +549,17 @@ async function onImportClick() {
   el.fileInput.click();
 }
 
+/* Mensaje visible de un fallo al importar. Con err.code es un error de
+   Firestore y se traduce con mensajeError(). Sin código es del propio PDF o
+   del lector (p. ej. «No se pudo cargar jsQR desde la CDN…»): su texto ya
+   explica qué pasó, así que se muestra tal cual. */
+function mensajeImportacion(err) {
+  if (err && !err.code && typeof err.message === "string" && err.message) {
+    return err.message;
+  }
+  return mensajeError(err, "importar el PDF");
+}
+
 async function onFileChosen(e) {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -557,7 +568,7 @@ async function onFileChosen(e) {
   } catch (err) {
     console.error("[inventario] importación:", err);
     setProgress("");
-    showError("No se pudo importar el PDF: " + (err && err.message ? err.message : err));
+    showError(mensajeImportacion(err));
   } finally {
     el.importBtn.disabled = false;
     el.fileInput.value = "";
@@ -723,16 +734,7 @@ export async function renderInventarioAdmin(force = false) {
     }
   } catch (err) {
     console.error("[inventario] carga:", err);
-    const code = err && err.code ? ` (${err.code})` : "";
-    showError(
-      "No se pudo cargar el inventario" + code + ": " +
-        (err && err.message ? err.message : err) +
-        (err && err.code === "permission-denied"
-          ? " Despliega las reglas de Firestore (firebase deploy --only firestore:rules) " +
-            "para habilitar la colección «inventario». Mientras tanto, el registro de " +
-            "vales sigue funcionando con el QR generado por la app."
-          : "")
-    );
+    showError(mensajeError(err, "cargar el inventario"));
   }
 }
 
@@ -914,10 +916,7 @@ async function onTableClick(event) {
   } catch (err) {
     console.error("[inventario] aprobación:", err);
     button.disabled = false;
-    showError(
-      `No se pudo aprobar el folio ${formatFolio(folio)}: ` +
-        (err && err.message ? err.message : err)
-    );
+    showError(mensajeError(err, `aprobar el folio ${formatFolio(folio)}`));
   }
 }
 

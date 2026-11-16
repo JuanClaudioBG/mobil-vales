@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { withTimeout, withRetry, money } from "../js/utils.js";
+import { withTimeout, withRetry, money, mensajeError } from "../js/utils.js";
 
 if (!fs.existsSync("js/app.js")) {
   console.error("Ejecuta este script desde la raíz del repo: node tests/verify-guardado-incierto.mjs");
@@ -105,7 +105,7 @@ function cliente({ commitImpl, leerVale = async () => ({ exists: () => false }) 
     withRetry: (leer) => withRetry(leer, { ms: 30, delayMs: 5 }),
     getDocFromServer: async (ref) => { reg.lecturas.push(ref.id); return leerVale(ref); },
     makeQrCode: () => { throw new Error("no se emiten QR de prueba"); },
-    money, sum: (a) => a.reduce((s, n) => s + n, 0),
+    money, mensajeError, sum: (a) => a.reduce((s, n) => s + n, 0),
     marcarAsignadosLocal: (a) => reg.marcados.push([...a].map((p) => p.folio)), // arreglo de este realm
     closeConfirm() {}, valeForm: { reset: () => reg.resets++ },
     clearCart() { ctx.carrito = []; ctx.actualizarAccionRegistro(); },
@@ -215,7 +215,7 @@ await testAsync("commit que tarda y LUEGO se rechaza = error normal, se libera y
   assert.equal(ctx.registroIncierto, null);
   assert.equal(ctx.avisoIncierto.hidden, true);
   assert.equal(ctx.formError.hidden, false);
-  assert.equal(ctx.formError.textContent, "No se pudieron guardar los vales: Missing or insufficient permissions.");
+  assert.equal(ctx.formError.textContent, "No tienes permiso para guardar el registro o el registro cambió. Pulsa «Actualizar» e inténtalo de nuevo; si sigue, avisa al administrador.");
   assert.doesNotMatch(ctx.formError.textContent, /folio/i, "no se afirma una causa que no se sabe");
   assert.deepEqual([reg.toasts.length, reg.qrs.length, reg.marcados.length, reg.resets], [0, 0, 0, 0]);
   assert.deepEqual(ctx.carrito, [200, 500], "el carrito queda para volver a intentar");
@@ -233,7 +233,7 @@ await testAsync("rechazo inmediato del servidor sigue siendo un error normal (si
   await ctx.doSave();
   assert.equal(ctx.registroIncierto, null);
   assert.equal(ctx.avisoIncierto.hidden, true);
-  assert.equal(ctx.formError.textContent, "No se pudieron guardar los vales: denegado");
+  assert.equal(ctx.formError.textContent, "No se pudo guardar el registro. Inténtalo de nuevo.");
   assert.equal(reg.commits, 1);
 });
 
@@ -344,7 +344,7 @@ await testAsync("si el commit se rechaza mientras se comprueba, el aviso no reap
   await comprobando;
   assert.equal(ctx.avisoIncierto.hidden, true);
   assert.equal(ctx.registroIncierto, null);
-  assert.match(ctx.formError.textContent, /No se pudieron guardar los vales: rechazado/);
+  assert.equal(ctx.formError.textContent, "No se pudo guardar el registro. Inténtalo de nuevo.");
 });
 
 // ===========================================================================

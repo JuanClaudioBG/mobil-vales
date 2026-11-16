@@ -34,6 +34,7 @@ import {
   withTimeout,
   folioDe,
   coincideBusqueda,
+  mensajeError,
 } from "./utils.js";
 import {
   EMPTY_FILTERS,
@@ -113,6 +114,8 @@ const countEl = $("#total-count");
 const filtroCategoria = $("#filtro-categoria");
 const filtroMes = $("#filtro-mes");
 const filtroNombre = $("#filtro-nombre");
+const filtroAnulados = $("#filtro-anulados");
+const totalAnuladosEl = $("#total-anulados");
 const appError = $("#app-error");
 const loadingEl = $("#loading");
 const refreshBtn = $("#btn-actualizar");
@@ -796,13 +799,8 @@ async function loadVales() {
     renderAdmin();
   } catch (err) {
     loadingEl.hidden = true;
-    const code = err && err.code ? ` (${err.code})` : "";
-    showAppError(
-      "Error al cargar los datos" + code + ": " +
-        (err && err.message ? err.message : err) +
-        ". Si el código es 'permission-denied', despliega las reglas de Firestore. " +
-        "Pulsa «Actualizar» para reintentar."
-    );
+    console.error("Error al cargar los vales:", err);
+    showAppError(mensajeError(err, "cargar el historial"));
   } finally {
     for (const btn of refreshButtons) btn.disabled = false;
   }
@@ -1217,9 +1215,10 @@ async function doSave() {
   }
 }
 
+// Error CONCLUYENTE al guardar (el servidor dijo que no; no se guardó nada).
+// Los tiempos agotados no pasan por aquí: tienen su propio aviso.
 function mostrarErrorGuardado(err) {
-  formError.textContent =
-    "No se pudieron guardar los vales: " + (err && err.message ? err.message : err);
+  formError.textContent = mensajeError(err, "guardar el registro");
   formError.hidden = false;
 }
 
@@ -1747,7 +1746,7 @@ async function abrirValeExistente(v, btn) {
     openQrModal([await valeParaModal(v)]);
   } catch (err) {
     console.error("[vales] no se pudo reabrir el vale:", err);
-    alert("No se pudo abrir el vale: " + (err && err.message ? err.message : err));
+    alert(mensajeError(err, "abrir el vale"));
   } finally {
     btn.disabled = false;
   }
@@ -1926,7 +1925,7 @@ async function anularVale(vale) {
     previo = await comprobarAntesDeAnular(vale);
   } catch (err) {
     console.error("Error al comprobar el vale antes de anular:", err);
-    alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
+    alert(mensajeError(err, "anular el vale"));
     return; // el vale NO se anula
   }
 
@@ -1971,17 +1970,14 @@ async function anularVale(vale) {
       console.error("Error al anular:", commit.err);
       const rechazado = commit.err && commit.err.code === "permission-denied";
       // Agotar el tiempo no cancela la escritura: puede haberse anulado igual.
+      // Ese aviso se queda tal cual; los demás fallos son concluyentes (el
+      // lote es atómico, no cambió nada) y se traducen con mensajeError(),
+      // que no afirma un motivo que un rechazo no demuestra.
       alert(
         commit.incierto
           ? "Se agotó el tiempo al anular. Puede que SÍ se haya anulado: " +
             "pulsa «Actualizar» y compruébalo antes de volver a intentarlo."
-          : rechazado
-            ? // El servidor dijo que no y el lote es atómico: no cambió nada.
-              // NO se afirma el motivo: un rechazo no prueba por sí solo que
-              // el vale o el folio hayan cambiado.
-              "El servidor rechazó la anulación y no se hizo ningún cambio. " +
-              "Actualizamos la lista: revisa cómo está el vale antes de volver a intentarlo."
-            : "No se pudo anular, revisa tu conexión e intenta de nuevo"
+          : mensajeError(commit.err, "anular el vale")
       );
       if (rechazado) await loadVales();
       return;
@@ -1996,7 +1992,7 @@ async function anularVale(vale) {
     await loadVales();
   } catch (err) {
     console.error("Error al anular:", err);
-    alert("No se pudo anular, revisa tu conexión e intenta de nuevo");
+    alert(mensajeError(err, "anular el vale"));
   }
 }
 
@@ -2076,6 +2072,7 @@ setupAutocomplete(registradoPorInput, registradoPorSug, () => registradoresDisti
 filtroCategoria.addEventListener("change", renderHistorial);
 filtroMes.addEventListener("change", renderHistorial);
 filtroNombre.addEventListener("input", renderHistorial);
+filtroAnulados.addEventListener("change", renderHistorial);
 
 // Mes actual por defecto en los selectores de mes.
 filtroMes.value = currentMonthKey();
@@ -2091,12 +2088,25 @@ function folioHtml(v) {
     : '<span class="folio-sub folio-sub--none">Sin folio</span>';
 }
 
+/* Etiqueta de un vale anulado en el Historial, con la fecha de anulación si
+   quedó guardada (los anulados antiguos pueden no tener anuladoEn). */
+function anuladoHtml(v) {
+  const d = toDate(v.anuladoEn);
+  const fecha = d
+    ? " · " + d.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })
+    : "";
+  return `<span class="hist-anulado">Anulado${escapeHtml(fecha)}</span>`;
+}
+
 function renderHistorial() {
   const cat = filtroCategoria.value;
   const mes = filtroMes.value; // "YYYY-MM" o ""
   const busqueda = filtroNombre.value; // nombre o folio
+  // «Mostrar anulados» sólo AÑADE filas para consulta: los mismos filtros
+  // aplican, y el total y el contador siguen siendo sólo de vales vigentes.
+  const conAnulados = filtroAnulados.checked;
 
-  const vales = activos(allVales).filter((v) => {
+  const vales = (conAnulados ? allVales : activos(allVales)).filter((v) => {
     if (cat && v.categoria !== cat) return false;
     if (mes && monthKey(valeDate(v)) !== mes) return false;
     if (!coincideBusqueda(v, busqueda)) return false;
@@ -2105,13 +2115,21 @@ function renderHistorial() {
 
   tbody.innerHTML = "";
   let total = 0;
+  let vigentes = 0;
+  let anulados = 0;
 
   for (const v of vales) {
-    total += Number(v.monto) || 0;
+    const anulado = Boolean(v.anulado);
+    if (anulado) {
+      anulados++;
+    } else {
+      vigentes++;
+      total += Number(v.monto) || 0;
+    }
     const tr = document.createElement("tr");
-    tr.className = "row-" + catSlug(v.categoria);
+    tr.className = "row-" + catSlug(v.categoria) + (anulado ? " row-hist-anulada" : "");
     tr.innerHTML = `
-      <td class="hist-nombre">${escapeHtml(v.nombre)}${folioHtml(v)}</td>
+      <td class="hist-nombre">${escapeHtml(v.nombre)}${folioHtml(v)}${anulado ? anuladoHtml(v) : ""}</td>
       <td class="hist-folio">${folioDe(v) ? `Folio ${escapeHtml(formatFolio(folioDe(v)))}` : "Sin folio"}</td>
       <td class="col-categoria"><span class="badge badge--${catSlug(v.categoria)}">${escapeHtml(
       v.categoria
@@ -2121,13 +2139,16 @@ function renderHistorial() {
       <td class="col-registrado">${escapeHtml(v.registradoPor || "")}</td>
       <td class="notas col-notas">${escapeHtml(v.notas || "")}</td>
     `;
-    tr.appendChild(celdaAcciones(v, { conAnular: true }));
+    // Un anulado sólo se puede VER (modo consulta); nunca volver a anular.
+    tr.appendChild(celdaAcciones(v, { conAnular: !anulado }));
     tbody.appendChild(tr);
   }
 
   emptyState.hidden = vales.length > 0;
   totalEl.textContent = "$" + total.toLocaleString("es-MX");
-  countEl.textContent = String(vales.length);
+  countEl.textContent = String(vigentes);
+  totalAnuladosEl.hidden = anulados === 0;
+  totalAnuladosEl.textContent = `${anulados} ${anulados === 1 ? "anulado" : "anulados"}`;
 }
 
 // ===========================================================================

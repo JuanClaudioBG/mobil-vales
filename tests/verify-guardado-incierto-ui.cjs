@@ -173,7 +173,7 @@ const MSG_TARDA = /El guardado está tardando más de lo normal y sigue en curso
       assert.equal(await btn.isDisabled(),true);
       await page.evaluate(()=>window.__commits[1].reject(Object.assign(new Error('Missing or insufficient permissions.'),{code:'permission-denied'})));
       await page.waitForSelector('#form-error:not([hidden])');
-      assert.equal(await page.locator('#form-error').innerText(),'No se pudieron guardar los vales: Missing or insufficient permissions.');
+      assert.equal(await page.locator('#form-error').innerText(),'No tienes permiso para guardar el registro o el registro cambió. Pulsa «Actualizar» e inténtalo de nuevo; si sigue, avisa al administrador.');
       assert.equal(await aviso.isVisible(),false);
       assert.equal(await page.locator('#qr-modal').isVisible(),false);
       assert.equal(await btn.isDisabled(),false);

@@ -132,6 +132,8 @@
             <label>Mes <input type="month" id="filtro-mes" /></label>
             <label>Buscar <input type="text" enterkeyhint="search" id="filtro-nombre" placeholder="Nombre o folio…" autocomplete="off" /></label>
             <label>Categoría <select id="filtro-categoria"></select></label>
+            <!-- Apagado por defecto y sin persistir: el historial normal sólo muestra vigentes. -->
+            <label class="filtro-check"><input type="checkbox" id="filtro-anulados" /> Mostrar anulados</label>
           </div>
           <div class="table-wrap">
             <table>
@@ -151,6 +153,7 @@
           </div>
           <p id="empty-state" class="empty" hidden>No hay vales para los filtros seleccionados.</p>
           <div class="historial-total">
+            <span id="total-anulados" class="total-anulados" hidden></span>
             <span><span id="total-count">0</span> vales</span>
             <span>Total: <strong id="total-monto">$0</strong></span>
           </div>

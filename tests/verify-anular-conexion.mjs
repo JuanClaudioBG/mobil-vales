@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import assert from "node:assert/strict";
 
-import { withTimeout, withRetry, folioDe } from "../js/utils.js";
+import { withTimeout, withRetry, folioDe, mensajeError } from "../js/utils.js";
 
 if (!fs.existsSync("js/app.js")) {
   console.error(
@@ -301,6 +301,7 @@ function construirAnular(escenario) {
     "requestAdminPin", "comprobarAntesDeAnular", "writeBatch", "doc", "serverTimestamp",
     "inventarioDocRef", "camposDevolucion", "commitConTiempo", "refrescarInventario",
     "showToast", "loadVales", "formatFolio", "alert", "db", "COLLECTION", "console", "folioDe",
+    "mensajeError",
     `${anularSrc}; return anularVale;`
   );
   const anularVale = fabrica(
@@ -333,12 +334,13 @@ function construirAnular(escenario) {
     (f) => String(f),
     (m) => registro.alertas.push(m),
     {}, "vales",
-    { error: () => {}, warn: () => {}, log: () => {} }, folioDe
+    { error: () => {}, warn: () => {}, log: () => {} }, folioDe, mensajeError
   );
   return { anularVale, registro };
 }
 
-const MENSAJE = "No se pudo anular, revisa tu conexión e intenta de nuevo";
+// Error sin código de Firestore (p. ej. "Connection failed."): mensaje genérico.
+const MENSAJE = "No se pudo anular el vale. Inténtalo de nuevo.";
 
 await testAsync("lectura del folio caída ⇒ NI UNA escritura", async () => {
   const { anularVale, registro } = construirAnular({ lecturaFalla: true });
@@ -414,7 +416,7 @@ await testAsync("rechazo del servidor: no afirma el motivo y refresca la lista",
     folioExiste: true, commitFalla: true, codigo: "permission-denied",
   });
   await anularVale({ id: "v1", nombre: "Karen", folio: "117765" });
-  assert.match(registro.alertas[0], /rechazó la anulación y no se hizo ningún cambio/);
+  assert.match(registro.alertas[0], /^No tienes permiso para anular el vale o el registro cambió\./);
   assert.ok(
     !/otro dispositivo|ya fue|colisi/i.test(registro.alertas[0]),
     "un error de permisos no demuestra por sí solo la causa"

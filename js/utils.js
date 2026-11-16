@@ -160,3 +160,37 @@ export async function withRetry(leer, { onRetry, onSettled, ms, delayMs } = {}) 
     }
   }
 }
+
+// ============================================================================
+//  Mensajes de error para el encargado
+// ============================================================================
+/* Traduce un error (normalmente de Firestore) a un mensaje claro en español.
+   `accion` va en infinitivo y con su objeto: "guardar el registro", "anular
+   el vale"… El error técnico completo NO se pierde: quien llama lo deja en
+   console.error.
+
+   No se usa para tiempos agotados de ESCRITURA: esos tienen su propio mensaje
+   ("puede que sí se haya guardado") y nunca pasan por aquí. Un tiempo agotado
+   de LECTURA (`esTimeout`, sin código) sí cuenta como falta de conexión. */
+export function mensajeError(err, accion) {
+  const codigo =
+    err && typeof err.code === "string" ? err.code.replace(/^firestore\//, "") : "";
+  if (codigo === "permission-denied") {
+    return (
+      `No tienes permiso para ${accion} o el registro cambió. Pulsa «Actualizar» ` +
+      "e inténtalo de nuevo; si sigue, avisa al administrador."
+    );
+  }
+  const sinRed =
+    codigo === "unavailable" ||
+    codigo === "deadline-exceeded" ||
+    Boolean(err && err.esTimeout) ||
+    (!codigo && typeof navigator !== "undefined" && navigator.onLine === false);
+  if (sinRed) {
+    return "Sin conexión con el servidor. Revisa tu señal e inténtalo de nuevo.";
+  }
+  if (codigo === "failed-precondition" || codigo === "aborted") {
+    return "Otro celular cambió estos datos al mismo tiempo. Pulsa «Actualizar» e inténtalo de nuevo.";
+  }
+  return `No se pudo ${accion}. Inténtalo de nuevo.` + (codigo ? ` (${codigo})` : "");
+}
