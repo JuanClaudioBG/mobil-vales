@@ -249,6 +249,11 @@ const carritoCountEl = $("#carrito-count");
 const btnLimpiar = $("#btn-limpiar");
 
 let allVales = [];
+// Número de la última llamada a loadVales(). Sólo esa puede asignar allVales,
+// pintar y rehabilitar los botones (ver loadVales). Se declara AQUÍ y no junto
+// a la función: unlock() llama a loadVales() al evaluar el módulo, antes de
+// llegar a esas líneas, y un `let` declarado allí estaría en su zona muerta.
+let solicitudVales = 0;
 const carrito = new Map(); // monto -> cantidad
 
 const MAX_VALES = 20; // tope de vales por registro
@@ -509,10 +514,31 @@ initVersionCheck();
 // --- Puerta de PIN (sólo cosmética, ver advertencia en config.js) ----------
 let inventarioIniciado = false;
 
+/* «Ya se metió el PIN en esta pestaña». Con el almacenamiento bloqueado
+   (cookies desactivadas, modos privados antiguos) el simple acceso a
+   sessionStorage LANZA. Sin estas guardas la excepción cortaba la evaluación
+   del módulo a media carga y la app se quedaba sin formulario, carrito ni
+   pestañas. Si falla: leer devuelve null y guardar no hace nada, así que la
+   app carga normal y pide el PIN en cada carga. */
+function leerDesbloqueo() {
+  try {
+    return sessionStorage.getItem("vales_unlocked");
+  } catch (_) {
+    return null;
+  }
+}
+function guardarDesbloqueo() {
+  try {
+    sessionStorage.setItem("vales_unlocked", "1");
+  } catch (_) {
+    /* sin almacenamiento: se pedirá el PIN de nuevo en la próxima carga */
+  }
+}
+
 function unlock() {
   pinScreen.hidden = true;
   appScreen.hidden = false;
-  sessionStorage.setItem("vales_unlocked", "1");
+  guardarDesbloqueo();
   loadVales(); // carga inicial (una sola vez); loadVales gestiona sus errores
 
   // El inventario se conecta al entrar (no antes: así no se descarga nada
@@ -543,7 +569,7 @@ pinForm.addEventListener("submit", (e) => {
   }
 });
 
-if (sessionStorage.getItem("vales_unlocked") === "1") {
+if (leerDesbloqueo() === "1") {
   unlock();
 }
 
@@ -766,7 +792,17 @@ function renderCart() {
 // mientras que una lectura puntual falla de forma explícita. El botón
 // «Actualizar» permite recargar manualmente.
 async function loadVales() {
+  /* Varias cargas pueden cruzarse (entrar, «Actualizar», tras registrar, tras
+     anular) y la red no garantiza el orden de las respuestas. Sólo la llamada
+     MÁS RECIENTE puede asignar allVales, pintar, mostrar su error y rehabilitar
+     los botones; una respuesta vieja que llega después se descarta en silencio
+     para que no pise datos más nuevos con otros más viejos. */
+  const solicitud = ++solicitudVales;
+  const vigente = () => solicitud === solicitudVales;
   clearAppError();
+  // Una carga anterior ya superada no retira su propio aviso de «Conexión
+  // lenta»: esta empieza siempre con el texto neutro.
+  hideSlowNotice();
   loadingEl.hidden = false;
   for (const btn of refreshButtons) btn.disabled = true;
 
@@ -787,10 +823,14 @@ async function loadVales() {
     // vales. Además nunca llegaba a fallar, de modo que ni el reintento ni el
     // mensaje de abajo se habrían activado jamás. Leyendo del servidor, una
     // conexión colgada falla de verdad y entonces sí hay reintento y aviso.
+    // Los avisos del reintento también son sólo de la llamada vigente: una
+    // carga superada que reintenta tarde no debe volver a mostrar «Conexión
+    // lenta» encima de un historial que ya se cargó.
     const snapshot = await withRetry(() => getDocsFromServer(valesRef), {
-      onRetry: showSlowNotice,
-      onSettled: hideSlowNotice,
+      onRetry: () => { if (vigente()) showSlowNotice(); },
+      onSettled: () => { if (vigente()) hideSlowNotice(); },
     });
+    if (!vigente()) return; // respuesta vieja: otra carga más reciente manda
     allVales = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
     allVales.sort((a, b) => {
       const ta = valeDate(a) ? valeDate(a).getTime() : 0;
@@ -804,11 +844,15 @@ async function loadVales() {
     renderDashboard();
     renderAdmin();
   } catch (err) {
+    if (!vigente()) return; // fallo de una carga vieja: no tapa a la reciente
     loadingEl.hidden = true;
     console.error("Error al cargar los vales:", err);
     showAppError(mensajeError(err, "cargar el historial"));
   } finally {
-    for (const btn of refreshButtons) btn.disabled = false;
+    // Mientras la carga más reciente siga en curso, los botones no se sueltan.
+    if (vigente()) {
+      for (const btn of refreshButtons) btn.disabled = false;
+    }
   }
 }
 
@@ -1254,9 +1298,13 @@ async function completarRegistro(reg) {
   updateFechaToggle(); // oculta el picker, quita el resaltado y restaura la etiqueta
   personaSelect.focus();
   showToast(`✅ ${n} ${n === 1 ? "vale registrado" : "vales registrados"} — ${money(total)} total`);
-  await loadVales();
-  // Tras el toast de éxito, muestra el QR de cada vale del lote.
+  // Tras el toast de éxito, muestra el QR de cada vale del lote. Va ANTES de
+  // recargar el historial y sin esperarlo: con el modal abierto
+  // isSafeToReload() da false, así que una versión nueva no recarga la página
+  // encima del QR, y en una red lenta el QR no espera a la lectura.
   openQrModal(reg.savedVales);
+  // loadVales() gestiona sus propios errores; el catch es sólo una red.
+  loadVales().catch((e) => console.error("Error al recargar el historial tras guardar:", e));
 }
 
 /* Rechazo del commit después del timeout. Es concluyente: el lote es atómico,

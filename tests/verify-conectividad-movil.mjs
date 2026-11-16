@@ -623,8 +623,10 @@ test("loadVales() lee del servidor, no de la caché local", () => {
 test("loadVales() usa el reintento y enseña «Conexión lenta, reintentando…»", () => {
   const loadVales = extraerFuncion(appCode, "async function loadVales(");
   assert.match(loadVales, /withRetry\(\(\) => getDocsFromServer\(valesRef\)/);
-  assert.match(loadVales, /onRetry: showSlowNotice/);
-  assert.match(loadVales, /onSettled: hideSlowNotice/);
+  // El aviso se pone y se quita sólo si esta carga sigue siendo la más
+  // reciente (`vigente()`): una carga ya superada no lo vuelve a mostrar.
+  assert.match(loadVales, /onRetry: \(\) => \{ if \(vigente\(\)\) showSlowNotice\(\); \}/);
+  assert.match(loadVales, /onSettled: \(\) => \{ if \(vigente\(\)\) hideSlowNotice\(\); \}/);
   assert.match(app, /Conexión lenta, reintentando…/);
 });
 
