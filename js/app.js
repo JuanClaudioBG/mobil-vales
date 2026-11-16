@@ -45,11 +45,13 @@ import {
   aggregateTopRequesters,
   requesterDetailRows,
   chartMonths,
+  monthInPeriod,
   aggregateMonthlySeries,
   orderChartRequesters,
   assignRequesterColors,
   filterScopeLabel,
   topHiddenSummary,
+  compareWithPrevious,
 } from "./dashboard-data.js";
 import {
   initInventario,
@@ -225,6 +227,10 @@ const dashChartWrap = $("#dash-chart-wrap");
 const dashChartHint = $("#dash-chart-hint");
 const dashChartEmpty = $("#dash-chart-empty");
 const dashLegend = $("#dash-legend");
+const dashDesglose = $("#dash-desglose");
+const dashDesgloseTitle = $("#dash-desglose-title");
+const dashDesgloseList = $("#dash-desglose-list");
+const dashDesgloseEmpty = $("#dash-desglose-empty");
 
 // Admin
 const adminBody = $("#admin-body");
@@ -2167,6 +2173,16 @@ let dashDetail = null; // nombre del solicitante abierto en el detalle
 let dashExpanded = false; // Top: mostrar todos vs top 5
 let dashChart = null; // instancia de Chart.js
 
+// Gráfica en móvil (< 600px): apilada con los 5 solicitantes de más importe en
+// la ventana y el resto en «Otros»; debajo, el desglose por solicitante. Al
+// cruzar el umbral se vuelve a dibujar.
+const dashMobileMQ = window.matchMedia("(max-width: 599.98px)");
+dashMobileMQ.addEventListener("change", () => renderDashboard());
+const DASH_HINT_DESKTOP = dashChartHint.textContent;
+const DASH_HINT_MOBILE = "Toca un mes para ver su desglose; toca un color para ver el detalle.";
+const DASH_MOBILE_SERIES = 5;
+const DASH_OTROS_COLOR = "#5b6573";
+
 function defaultDashFilters() {
   return { ...EMPTY_FILTERS, ...monthRange(currentMonthKey()) };
 }
@@ -2310,9 +2326,37 @@ function renderDashboard() {
     PERSONAS.map((p) => p.nombre),
     records.map((r) => r.nombre || "Sin nombre")
   );
-  renderDashTop(ranking, colors);
+  renderDashTop(ranking, colors, dashPrevComparison(records, ranking, presetMonth));
   renderDashDetail(filtered);
   renderDashChart(records, ranking, colors);
+}
+
+// Comparación por solicitante vs el mes anterior con los mismos filtros
+// Persona/Tipo. Sólo con preset de mes (igual que renderDashTrend): con un
+// rango personalizado no hay "mes anterior" equivalente y devuelve null.
+function dashPrevComparison(records, ranking, presetMonth) {
+  if (!presetMonth) return null;
+  const prev = lastNMonths(presetMonth, 2)[0];
+  const prevRanking = aggregateTopRequesters(
+    filterDashboardVales(records, { ...dashFilters, ...monthRange(prev.key) })
+  );
+  return { label: prev.label, byName: compareWithPrevious(ranking, prevRanking) };
+}
+
+// Marca "↑ $X" / "↓ $X" / "=" / "nuevo" junto al monto de un solicitante.
+// Las flechas van ocultas al lector de pantalla, que oye la frase completa.
+function dashDeltaHtml(c, prevLabel) {
+  if (!c) return "";
+  const amount = money(Math.abs(c.diff));
+  const [cls, visible, spoken] =
+    c.trend === "up" ? ["up", `↑ ${amount}`, `sube ${amount} vs ${prevLabel}`]
+    : c.trend === "down" ? ["down", `↓ ${amount}`, `baja ${amount} vs ${prevLabel}`]
+    : c.trend === "same" ? ["flat", "=", `igual que ${prevLabel}`]
+    : ["flat", "nuevo", `nuevo: sin vales en ${prevLabel}`];
+  return (
+    `<span class="lb-delta stat-trend stat-trend--${cls}" title="${escapeHtml(spoken)}">` +
+    `<span aria-hidden="true">${visible}</span><span class="sr-only">, ${escapeHtml(spoken)}</span></span>`
+  );
 }
 
 function renderDashChips(presetMonth) {
@@ -2364,7 +2408,7 @@ function renderDashTrend(records, total, presetMonth) {
   dashTrend.hidden = false;
 }
 
-function renderDashTop(ranking, colors) {
+function renderDashTop(ranking, colors, comparison) {
   dashTopEmpty.hidden = ranking.length > 0;
   const top1 = ranking.length ? ranking[0].total : 0;
   const visibles = dashExpanded ? ranking : ranking.slice(0, TOP_VISIBLE);
@@ -2400,7 +2444,7 @@ function renderDashTop(ranking, colors) {
     const color = colors.get(r.name);
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "lb-row" + (r.name === dashDetail ? " lb-row--selected" : "");
+    row.className = "lb-row" + (r.name === dashDetail ? " lb-row--selected" : "") + (comparison ? " lb-row--delta" : "");
     row.dataset.name = r.name;
     row.setAttribute("aria-pressed", String(r.name === dashDetail));
     row.innerHTML =
@@ -2408,7 +2452,8 @@ function renderDashTop(ranking, colors) {
       `<span class="lb-dot" style="background:${color}"></span>` +
       `<span class="lb-name">${escapeHtml(r.name)}</span>` +
       `<span class="lb-bar"><span class="lb-bar-fill" style="width:${pct}%;background:${color}"></span></span>` +
-      `<span class="lb-amount">${money(r.total)} <span class="muted">(${r.count})</span></span>`;
+      `<span class="lb-amount">${money(r.total)} <span class="muted">(${r.count})</span></span>` +
+      (comparison ? dashDeltaHtml(comparison.byName.get(r.name), comparison.label) : "");
     dashTop.appendChild(row);
   }
 }
@@ -2453,6 +2498,7 @@ function renderDashDetail(filtered) {
 
 function renderDashChart(records, periodRanking, colors) {
   const f = dashFilters;
+  const mobile = dashMobileMQ.matches;
   // Mismas dimensiones (persona/tipo); el periodo sólo define la ventana de meses.
   const dimensionFiltered = filterDashboardVales(records, f, { ignorePeriod: true });
   const months = chartMonths(f.dateFrom, f.dateTo);
@@ -2470,7 +2516,9 @@ function renderDashChart(records, periodRanking, colors) {
   dashChartEmpty.hidden = hasData;
   dashChartWrap.hidden = !hasData;
   dashChartHint.hidden = !hasData;
+  dashChartHint.textContent = mobile ? DASH_HINT_MOBILE : DASH_HINT_DESKTOP;
   dashLegend.innerHTML = "";
+  renderDashDesglose(mobile && hasData, periodRanking, colors);
   if (!hasData) return;
   if (typeof window.Chart !== "function") {
     dashChartWrap.hidden = true;
@@ -2485,25 +2533,44 @@ function renderDashChart(records, periodRanking, colors) {
     const [y, mm] = m.split("-").map(Number);
     return new Date(y, mm - 1, 1).toLocaleDateString("es-MX", { month: "short", year: "2-digit" });
   });
-  const datasets = segNames.map((name) => {
-    return {
-      label: name,
-      data: series.map((m) => m.bySegment.get(name) || 0),
-      backgroundColor: colors.get(name),
-      // Separador del color de la tarjeta entre segmentos apilados.
-      borderColor: "#1a1f27",
-      borderWidth: { top: 1.5 },
-      borderSkipped: false,
-      maxBarThickness: 84,
-      categoryPercentage: 0.78,
-      barPercentage: 0.9,
-      stack: "total",
-    };
+  // Móvil: el mes seleccionado se marca sólo con su etiqueta del eje (negrita y
+  // color de texto principal).
+  const selected = months.map((m) => monthInPeriod(m, f.dateFrom, f.dateTo));
+  const segment = (label, data, color, extra = {}) => ({
+    label,
+    data,
+    backgroundColor: color,
+    // Separador del color de la tarjeta entre segmentos apilados.
+    borderColor: "#1a1f27",
+    borderWidth: { top: 1.5 },
+    borderSkipped: false,
+    maxBarThickness: mobile ? 64 : 84,
+    categoryPercentage: mobile ? 0.9 : 0.78,
+    barPercentage: mobile ? 0.88 : 0.9,
+    stack: "total",
+    ...extra,
   });
+  let datasets;
+  if (mobile) {
+    // Los 5 de más importe en la ventana visible (mismos filtros Persona/Tipo);
+    // el resto se suma en «Otros», arriba de la pila. Así cada mes suma su total.
+    const top = windowRanking.slice(0, DASH_MOBILE_SERIES).map((r) => r.name).filter((n) => inWindow.has(n));
+    const otros = series.map((m) => m.total - top.reduce((s, n) => s + (m.bySegment.get(n) || 0), 0));
+    datasets = top.map((name) => segment(name, series.map((m) => m.bySegment.get(name) || 0), colors.get(name)));
+    if (otros.some((v) => v > 0)) datasets.push(segment("Otros", otros, DASH_OTROS_COLOR, { isOtros: true }));
+  } else {
+    datasets = segNames.map((name) => segment(name, series.map((m) => m.bySegment.get(name) || 0), colors.get(name)));
+  }
 
   const muted = "#97a1b0";
   const text = "#e7ecf3";
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  dashChartCanvas.setAttribute(
+    "aria-label",
+    mobile
+      ? "Total activo por mes, segmentado por los 5 solicitantes principales y Otros"
+      : "Total activo por mes, segmentado por solicitante"
+  );
   dashChart = new window.Chart(dashChartCanvas, {
     type: "bar",
     data: { labels, datasets },
@@ -2544,7 +2611,7 @@ function renderDashChart(records, periodRanking, colors) {
       interaction: { mode: "point", intersect: true }, // sólo el segmento bajo el puntero
       plugins: {
         legend: { display: false },
-        tooltip: {
+        tooltip: mobile ? { enabled: false } : {
           backgroundColor: "#10151e", titleColor: text, bodyColor: text,
           borderColor: "#46546a", borderWidth: 1, padding: 10,
           filter: (item) => item.parsed.y > 0,
@@ -2555,7 +2622,15 @@ function renderDashChart(records, periodRanking, colors) {
         },
       },
       scales: {
-        x: { stacked: true, grid: { display: false }, border: { display: false }, ticks: { color: muted } },
+        x: {
+          stacked: true, grid: { display: false }, border: { display: false },
+          ticks: mobile
+            ? {
+                color: (c) => (selected[c.index] ? text : muted),
+                font: (c) => ({ weight: selected[c.index] ? 700 : 400 }),
+              }
+            : { color: muted },
+        },
         y: {
           stacked: true, beginAtZero: true, grace: "8%",
           border: { display: false }, grid: { color: "rgba(151,161,176,0.12)" },
@@ -2566,11 +2641,13 @@ function renderDashChart(records, periodRanking, colors) {
         e.native.target.style.cursor = els.length || chartMonthAt(e) != null ? "pointer" : "default";
       },
       onClick: (e, els) => {
-        // Segmento → mes + detalle del solicitante. Columna vacía/eje → sólo el mes.
+        // Segmento → mes + detalle del solicitante. «Otros», columna vacía o
+        // etiqueta → sólo el mes.
         const seg = els[0];
         const i = seg ? seg.index : chartMonthAt(e);
         if (i == null) return;
-        const name = seg ? segNames[seg.datasetIndex] : null;
+        const ds = seg ? datasets[seg.datasetIndex] : null;
+        const name = ds && !ds.isOtros ? ds.label : null;
         dashFilters = { ...dashFilters, ...monthRange(months[i]) };
         dashExpanded = false;
         // Diferido: el render destruye esta gráfica y no debe hacerlo dentro de su propio evento.
@@ -2579,16 +2656,47 @@ function renderDashChart(records, periodRanking, colors) {
     },
   });
 
-  // Leyenda propia (HTML): todos los solicitantes, mismo orden y colores que los segmentos.
-  for (const name of segNames) {
+  // Leyenda propia (HTML): mismo orden y colores que los segmentos. En
+  // escritorio, todos los solicitantes; en móvil, las ≤6 series (con «Otros»).
+  for (const ds of datasets) {
     const item = document.createElement("span");
     item.className = "legend-item";
     item.innerHTML =
-      `<span class="legend-dot" style="background:${colors.get(name)}"></span>` +
-      escapeHtml(name);
+      `<span class="legend-dot" style="background:${ds.backgroundColor}"></span>` +
+      escapeHtml(ds.label);
     dashLegend.appendChild(item);
   }
 }
+
+// Desglose del periodo (sólo móvil): cada solicitante con su importe, de mayor a
+// menor, con los mismos filtros Persona/Tipo. Cada fila abre su detalle.
+function renderDashDesglose(show, ranking, colors) {
+  dashDesglose.hidden = !show;
+  dashDesgloseList.innerHTML = "";
+  if (!show) return;
+  dashDesgloseTitle.textContent = `Desglose de ${periodLabel(dashFilters)}`;
+  dashDesgloseEmpty.hidden = ranking.length > 0;
+  const top1 = ranking.length ? ranking[0].total : 0;
+  for (const r of ranking) {
+    const pct = top1 ? Math.max(2, Math.round((r.total / top1) * 100)) : 0;
+    const color = colors.get(r.name);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "desg-row" + (r.name === dashDetail ? " desg-row--selected" : "");
+    row.dataset.name = r.name;
+    row.setAttribute("aria-pressed", String(r.name === dashDetail));
+    row.innerHTML =
+      `<span class="lb-dot" style="background:${color}"></span>` +
+      `<span class="desg-name">${escapeHtml(r.name)}</span>` +
+      `<span class="desg-amount">${money(r.total)}</span>` +
+      `<span class="lb-bar desg-bar"><span class="lb-bar-fill" style="width:${pct}%;background:${color}"></span></span>`;
+    dashDesgloseList.appendChild(row);
+  }
+}
+dashDesgloseList.addEventListener("click", (e) => {
+  const row = e.target.closest(".desg-row[data-name]");
+  if (row) openDashDetail(row.dataset.name);
+});
 
 // Índice del mes bajo el puntero (clic en la columna vacía o en la etiqueta).
 function chartMonthAt(e) {

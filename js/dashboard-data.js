@@ -227,3 +227,25 @@ export function topHiddenSummary(ranking, visibles) {
     hiddenVales: ocultos.reduce((s, r) => s + r.count, 0),
   };
 }
+
+/* Comparación por solicitante contra el mes anterior.
+
+   Recibe dos rankings de aggregateTopRequesters() calculados con los MISMOS
+   filtros Persona/Tipo: el del periodo actual y el del mes anterior. Devuelve
+   un Map nombre → { trend, diff, previous } SÓLO para quien aparece en el
+   ranking actual (quien ya no aparece no tiene fila que anotar):
+     · trend "up" / "down": diff = actual − anterior (con signo).
+     · trend "same": mismo importe (diff 0).
+     · trend "new": el mes anterior sumó $0 (no estaba en su ranking).
+   Los anulados no cuentan porque los rankings ya los excluyen. */
+export function compareWithPrevious(currentRanking, previousRanking) {
+  const before = new Map(previousRanking.map((r) => [r.name, r.total]));
+  const out = new Map();
+  for (const r of currentRanking) {
+    const previous = before.get(r.name) || 0;
+    const diff = r.total - previous;
+    const trend = previous === 0 ? "new" : diff > 0 ? "up" : diff < 0 ? "down" : "same";
+    out.set(r.name, { trend, diff, previous });
+  }
+  return out;
+}
